@@ -15,11 +15,11 @@
 *{box-sizing:border-box;min-width:0}
 html,body{margin:0;height:100%;background:#0a0a0a;color:var(--ink);overflow:hidden;font:500 13px/1.3 "JetBrains Mono",ui-monospace,monospace}
 canvas{display:block;width:100%;height:100%;touch-action:none}
-#hint{position:fixed;left:50%;bottom:calc(max(14px,env(safe-area-inset-bottom)) + 70px);transform:translateX(-50%);padding:8px 14px;border-radius:999px;border:1px solid var(--line);background:rgba(14,14,14,.7);color:var(--ink);white-space:nowrap;pointer-events:none;transition:opacity 1.2s}
+#hint{position:fixed;left:50%;bottom:calc(max(14px,env(safe-area-inset-bottom)) + 108px);transform:translateX(-50%);padding:8px 14px;border-radius:999px;border:1px solid var(--line);background:rgba(14,14,14,.7);color:var(--ink);white-space:nowrap;pointer-events:none;transition:opacity 1.2s}
 #hint.hide{opacity:0}
 .tag{position:fixed;top:16px;left:18px;color:var(--dim);letter-spacing:.02em;pointer-events:none}
 .tag b{color:var(--ink);font-weight:700}
-.bar{position:fixed;left:50%;bottom:max(14px,env(safe-area-inset-bottom));transform:translateX(-50%);display:flex;flex-wrap:wrap;justify-content:center;align-items:center;gap:6px;
+.bar{position:fixed;right:14px;top:10px;display:flex;flex-wrap:wrap;justify-content:center;align-items:center;gap:6px;
   width:max-content;max-width:calc(100% - 20px);padding:6px;border:1px solid var(--line);border-radius:14px;background:rgba(14,14,14,.82);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px)}
 .seg{display:flex;flex-wrap:wrap;gap:2px;padding:2px;border-radius:10px;background:rgba(255,255,255,.04)}
 button{font:inherit;color:var(--dim);background:none;border:0;border-radius:8px;min-height:40px;padding:0 12px;cursor:pointer}
@@ -33,7 +33,31 @@ input[type=range]{width:110px;accent-color:var(--acc)}
 #toast{position:fixed;left:50%;top:16px;transform:translate(-50%,-8px);opacity:0;transition:.25s;padding:8px 14px;border-radius:999px;background:var(--ink);color:#0a0a0a;font-weight:700;pointer-events:none}
 #toast.on{opacity:1;transform:translate(-50%,0)}
 .err{position:fixed;inset:0;display:none;place-items:center;color:var(--dim);font:16px system-ui,sans-serif;text-align:center;padding:24px}
-@media (max-width:600px){.tag{display:none}input[type=range]{width:84px}button{padding:0 9px}}
+/* pot label: floats over the pot */
+#pot{position:fixed;left:0;top:0;pointer-events:none;text-align:center;padding:6px 12px 7px;border-radius:10px;border:1px solid rgba(255,210,63,.35);
+  background:rgba(8,6,4,.72);backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);white-space:nowrap}
+#pot::after{content:"";position:absolute;left:50%;bottom:-6px;width:10px;height:10px;transform:translateX(-50%) rotate(45deg);background:rgba(8,6,4,.72);border-right:1px solid rgba(255,210,63,.35);border-bottom:1px solid rgba(255,210,63,.35)}
+#pot small{display:block;color:var(--dim);font-size:11px;letter-spacing:.08em}
+#potAmt{display:block;color:#ffd23f;font-size:20px;font-weight:700;font-variant-numeric:tabular-nums}
+/* bet panel: bottom middle, the stack on the felt follows it */
+.betp{position:fixed;left:50%;bottom:max(14px,env(safe-area-inset-bottom));transform:translateX(-50%);width:min(560px,calc(100% - 24px));
+  padding:10px 16px 12px;border:1px solid var(--line);border-radius:16px;background:rgba(10,8,6,.8);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px)}
+.betp .top{display:flex;justify-content:space-between;align-items:baseline;gap:12px;margin-bottom:4px}
+.betp .lbl{color:var(--dim)}
+#betAmt{font-size:22px;font-weight:700;color:var(--ink);font-variant-numeric:tabular-nums}
+#betBreak{display:flex;flex-wrap:wrap;gap:4px 12px;justify-content:flex-end;color:var(--dim);font-size:12px}
+#betBreak i{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:5px;vertical-align:-1px;box-shadow:0 0 0 1.5px rgba(255,255,255,.5) inset}
+.rng{display:flex;align-items:center;gap:12px}
+.rng span{color:var(--dim);font-variant-numeric:tabular-nums;min-width:3ch}
+#bet{flex:1;-webkit-appearance:none;appearance:none;height:44px;background:transparent;margin:0;width:100%;accent-color:#d81e2a}
+#bet::-webkit-slider-runnable-track{height:8px;border-radius:99px;background:linear-gradient(90deg,#d81e2a var(--fill,0%),rgba(255,255,255,.12) var(--fill,0%))}
+#bet::-moz-range-track{height:8px;border-radius:99px;background:linear-gradient(90deg,#d81e2a var(--fill,0%),rgba(255,255,255,.12) var(--fill,0%))}
+#bet::-webkit-slider-thumb{-webkit-appearance:none;width:30px;height:30px;margin-top:-11px;border-radius:50%;cursor:grab;border:0;
+  background:radial-gradient(circle,#f3e6d6 0 26%,#d81e2a 27% 52%,transparent 53%),repeating-conic-gradient(#f4efe4 0 14deg,#d81e2a 14deg 45deg);box-shadow:0 2px 8px rgba(0,0,0,.6)}
+#bet::-moz-range-thumb{width:30px;height:30px;border-radius:50%;cursor:grab;border:0;
+  background:radial-gradient(circle,#f3e6d6 0 26%,#d81e2a 27% 52%,transparent 53%),repeating-conic-gradient(#f4efe4 0 14deg,#d81e2a 14deg 45deg);box-shadow:0 2px 8px rgba(0,0,0,.6)}
+#bet:focus-visible{outline:none}#bet:focus-visible::-webkit-slider-thumb{outline:2px solid #ffd23f;outline-offset:2px}
+@media (max-width:600px){.tag{display:none}#betAmt{font-size:19px}input[type=range]{width:84px}button{padding:0 9px}}
 </style>
 <script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"}}</script>
 </head>
@@ -42,6 +66,11 @@ input[type=range]{width:110px;accent-color:var(--acc)}
 <div id="toast" role="status" aria-live="polite"></div>
 <div id="hint">Press on your cards and drag up to peel the corner, let go to drop them</div>
 <div class="err" id="err">Couldn't load the renderer. Reload to try again.</div>
+<div id="pot" aria-live="polite"><small>POT</small><span id="potAmt">$0</span><small id="potChips"></small></div>
+<div class="betp">
+  <div class="top"><div><span class="lbl">Bet </span><span id="betAmt">$0</span></div><div id="betBreak"></div></div>
+  <div class="rng"><span>$0</span><input id="bet" type="range" min="0" max="500" step="1" value="250" aria-label="Bet size"><span>$500</span></div>
+</div>
 <div class="bar">
   <div class="seg" role="group" aria-label="Palette">
     <button data-pal="0" aria-pressed="true">Color</button>
@@ -333,7 +362,7 @@ function gridGeo() {
 }
 const pair = new THREE.Group(), seat = new THREE.Group();
 seat.rotation.y = VIEW_YAW; scene.add(seat);
-pair.position.set(0, 0.0012, PAIR_Z); pair.rotation.y = 0.05; seat.add(pair);
+pair.position.set(-0.12, 0.0012, PAIR_Z); pair.rotation.y = 0.05; seat.add(pair);
 // bottom card first: the King lies on the felt, the Ace rests on top of it, shifted left
 const cards = [[kingTex, OFFSET / 2, 0], [aceTex, -OFFSET / 2, 1]].map(([face, x, layer]) => {
   const geo = gridGeo(), mesh = new THREE.Mesh(geo, [backPeel, peelMat(face)]);
@@ -616,6 +645,127 @@ audio.jackpot = pos => {
   [0, 2, 4, 5, 7].forEach((n, i) => tone(PENTA[n], now + 0.1 + i * 0.12, 0.35, 'square', 0.02, pan));                                   // fanfare
 };
 
+/* ---------- chip values, the pot total, and your $500 bet stack ---------- */
+const DENOM = [1, 5, 25, 100];                       // CHIPS order: white, red, green, black
+const potChips = lists.map(l => l.length);
+const potValue = potChips.reduce((a, n, ci) => a + n * DENOM[ci], 0);
+
+// Your $500: 20 white ($20) + 16 red ($80) + 8 green ($200) + 2 black ($200) = 46 chips
+const INV = [20, 16, 8, 2];
+const INV_TOTAL = INV.reduce((a, n, ci) => a + n * DENOM[ci], 0);
+const INV_CHIPS = INV.reduce((a, n) => a + n, 0);
+// Exact chips for every bet from $0 to $500, worked out once. The chip count follows the bet,
+// so a bigger bet is a taller stack, staying close to a straight line from 0 to 46 chips. A few small dips are
+// unavoidable (with 20 whites, $20 can be 20 chips but $21 can't be more than 17), so it keeps those as rare and small as it can.
+const BET_TABLE = (() => {
+  const combos = [];                                    // every way to make each amount from the $500 inventory
+  for (let b = 0; b <= INV_TOTAL; b++) combos.push([]);
+  for (let k = 0; k <= INV[3]; k++) for (let g = 0; g <= INV[2]; g++) for (let r = 0; r <= INV[1]; r++) for (let w = 0; w <= INV[0]; w++)
+    combos[w + 5 * r + 25 * g + 100 * k].push([w, r, g, k]);
+  const N = INV_CHIPS + 1, INF = 1e9, B = INV_TOTAL;
+  const has = combos.map(cs => { const h = new Uint8Array(N); cs.forEach(c => h[c[0] + c[1] + c[2] + c[3]] = 1); return h; });
+  // dp[b][n]: lowest cost for amounts 0..b ending with n chips at b. Cost = distance from the straight line,
+  // plus a heavy charge for every chip the stack loses when the bet goes up by a dollar.
+  const DROP = 6;
+  const dp = Array.from({ length: B + 1 }, () => new Float64Array(N).fill(INF)), from = Array.from({ length: B + 1 }, () => new Int16Array(N));
+  dp[0][0] = 0;
+  for (let b = 1; b <= B; b++) for (let n = 0; n < N; n++) {
+    if (!has[b][n]) continue;
+    let best = INF, arg = 0;
+    for (let m = 0; m < N; m++) {
+      const c = dp[b - 1][m] + (m > n ? (m - n) * DROP : 0);
+      if (c < best) { best = c; arg = m; }
+    }
+    dp[b][n] = best + Math.abs(n - INV_CHIPS * b / B); from[b][n] = arg;
+  }
+  const counts = new Int16Array(B + 1); counts[B] = INV_CHIPS;
+  for (let b = B; b > 0; b--) counts[b - 1] = from[b][counts[b]];
+  // for each amount, use the mix closest to the one just below it, so stepping $1 changes as few chips as possible
+  const table = [[0, 0, 0, 0]];
+  for (let b = 1; b <= B; b++) {
+    const prev = table[b - 1]; let pick = null, d0 = Infinity;
+    for (const c of combos[b]) {
+      if (c[0] + c[1] + c[2] + c[3] !== counts[b]) continue;
+      const d = c.reduce((a, v, i) => a + Math.abs(v - prev[i]), 0);
+      if (d < d0) { d0 = d; pick = c; }
+    }
+    table.push(pick);
+  }
+  return table;
+})();
+let betCounts = [0, 0, 0, 0];
+const chipsFor = b => BET_TABLE[b];
+
+// 2x2 cluster right beside your cards, on your side of the table, just above the slider on screen.
+// Tall columns at the back so the short ones never hide them from the lens.
+const BET_AT = new V3(0.21, 0, 1.86), BET_SCALE = 0.7;   // drawn a bit small: this close to a lens on the felt, full size towers over the shot
+const COLS = { 0: [-0.084, -0.085], 1: [0.084, -0.085], 2: [-0.084, 0.085], 3: [0.084, 0.085] };   // white, red back; green, black front
+const betGroup = new THREE.Group(); betGroup.position.copy(BET_AT); betGroup.scale.setScalar(BET_SCALE); seat.add(betGroup);
+const slots = DENOM.map((_, ci) => {
+  const im = new THREE.InstancedMesh(chipGeo, chipMats[ci], INV[ci]);
+  im.castShadow = im.receiveShadow = true; im.count = INV[ci]; betGroup.add(im);
+  const spin = Array.from({ length: INV[ci] }, () => R(0, TAU)), jit = Array.from({ length: INV[ci] }, () => [R(-1, 1) * 0.004, R(-1, 1) * 0.004]);
+  return { im, spin, jit, s: Array.from({ length: INV[ci] }, () => ({ on: false, a: 0, delay: 0 })) };
+});
+function setBet(b) {
+  const next = chipsFor(b);
+  next.forEach((n, ci) => {
+    const sl = slots[ci].s, had = betCounts[ci];
+    for (let i = 0; i < sl.length; i++) {
+      const on = i < n;
+      if (on && !sl[i].on) sl[i].delay = (i - had) * 0.03;            // new chips drop in one after another, bottom up
+      if (!on && sl[i].on) sl[i].delay = (had - 1 - i) * 0.02;         // removed chips lift off from the top down
+      sl[i].on = on;
+    }
+  });
+  betCounts = next;
+}
+const _bm = new THREE.Matrix4(), _bq = new THREE.Quaternion(), _bp = new V3(), _bs = new V3(), UPY = new V3(0, 1, 0);
+function updateBetChips(dt) {
+  slots.forEach((slot, ci) => {
+    const [cx, cz] = COLS[ci];
+    slot.s.forEach((st, i) => {
+      if (st.delay > 0) { st.delay -= dt; }
+      else {
+        const before = st.a;
+        st.a = THREE.MathUtils.clamp(st.a + (st.on ? 1 : -1) * dt * 7, 0, 1);
+        if (st.on && before < 1 && st.a === 1 && audio.on && audio.ctx) tone(R(2900, 3500), audio.ctx.currentTime, 0.06, 'sine', 0.025, 0.25);   // click as it lands
+      }
+      const a = st.a;
+      // landing: falls from above, speeding up; leaving: lifts and shrinks away
+      const lift = st.on ? 0.14 * (1 - a * a) : 0.06 * (1 - a);
+      const sc = a <= 0.001 ? 0.0001 : st.on ? Math.min(1, a * 4) : a;
+      _bp.set(cx + slot.jit[i][0], CT * (i + 0.5) + 0.0003 + lift, cz + slot.jit[i][1]);
+      _bq.setFromAxisAngle(UPY, slot.spin[i]); _bs.setScalar(sc);
+      slot.im.setMatrixAt(i, _bm.compose(_bp, _bq, _bs));
+    });
+    slot.im.instanceMatrix.needsUpdate = true;
+  });
+}
+
+/* ---------- the pot label and the bet slider ---------- */
+const fmt = v => '$' + v.toLocaleString('en-US');
+const potEl = document.getElementById('pot'), betEl = document.getElementById('betAmt'), betBreak = document.getElementById('betBreak');
+const slider = document.getElementById('bet');
+document.getElementById('potAmt').textContent = fmt(potValue);
+document.getElementById('potChips').textContent = potChips.reduce((a, n) => a + n, 0) + ' chips';
+let potTopY = 0; for (const l of lists) for (const m of l) potTopY = Math.max(potTopY, new V3().setFromMatrixPosition(m).y);
+const potAnchor = new V3(0, potTopY + CT * 3, 0), _pa = new V3();
+function placePot() {
+  _pa.copy(potAnchor).project(camera);
+  potEl.style.transform = `translate(${(_pa.x * 0.5 + 0.5) * innerWidth}px, ${(-_pa.y * 0.5 + 0.5) * innerHeight}px) translate(-50%, -100%)`;
+}
+const CHIP_HEX = ['#ece7da', '#d81e2a', '#14a557', '#9a9a9a'];
+function onBet() {
+  const b = +slider.value;
+  slider.style.setProperty('--fill', (b / INV_TOTAL * 100) + '%');
+  slider.setAttribute('aria-valuetext', fmt(b));
+  betEl.textContent = fmt(b);
+  setBet(b);
+  betBreak.innerHTML = betCounts.map((n, ci) => n ? `<span><i style="background:${CHIP_HEX[ci]}"></i>${n}&times;${DENOM[ci]}</span>` : '').join('') || '<span>No chips out</span>';
+}
+slider.max = INV_TOTAL; slider.addEventListener('input', onBet); onBet();
+
 /* ---------- glyph atlas + ASCII pass (same pipeline as the card and chip assets) ---------- */
 const CHARS = ' .:-=+*#%@';
 try { await document.fonts.load('700 30px "JetBrains Mono"'); } catch (e) {}
@@ -710,7 +860,7 @@ canvas.addEventListener('pointermove', e => {
 // letting go drops the cards back flat on the felt
 const release = () => { if (!peelDrag) return; peelDrag = null; peelState.target = 0; canvas.style.cursor = hovering ? 'grab' : 'default'; };
 canvas.addEventListener('pointerup', release); canvas.addEventListener('pointercancel', release);
-addEventListener('keydown', e => { if (e.key === 'ArrowUp') { e.preventDefault(); keyHeld = true; peelState.side = -1; } });
+addEventListener('keydown', e => { if (e.key === 'ArrowUp' && e.target.tagName !== 'INPUT') { e.preventDefault(); keyHeld = true; peelState.side = -1; } });
 addEventListener('keyup', e => { if (e.key === 'ArrowUp') { keyHeld = false; peelState.target = 0; } });
 function updatePeel(dt) {
   const st = peelState;
@@ -770,7 +920,7 @@ soundBtn.addEventListener('click', () => {
 });
 renderer.setAnimationLoop(() => {
   const dt = Math.min(clock.getDelta(), 0.05);
-  updatePeel(dt); updateCasino(clock.elapsedTime, dt);
+  updatePeel(dt); updateCasino(clock.elapsedTime, dt); updateBetChips(dt); placePot();
   ascii.uniforms.time.value = clock.elapsedTime;
   composer.render();
 });

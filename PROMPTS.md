@@ -90,6 +90,13 @@ The revised prompt described every object, the lighting and the background signs
 - A screenshot of my own scene attached as a layout reference, labeled "layout only, don't copy the ASCII style."
 - Small fixes as edits on the last image, not new prompts.
 
+## 12. Pot size and a bet slider
+
+> Let's add a visual indicator of what the pot size is currently using actual chip values as the metric... give me $500 in chips spread across different denominations and attach a slider that lets you edit your bet size. Have the slider be in the bottom middle of the screen with both minimum and maximum boundaries listed "$0-500" and have my chip stack become one with the slider and react to each adjustment... Let's wait on the actual "bet" function until we know this function is dialed in completely.
+
+**Result:** a pot label computed from the chips on the felt ($5,182), and a $500 stack (20 white, 16 red, 8 green, 2 black) that rebuilds itself with exact chips for every dollar on the slider.
+**Lesson:** "bigger as it gets closer to $500" sounds simple, but chip math fights it: $100 is one black chip and $95 is seven. Saying how it should behave pushed toward a lookup of every amount from $0 to $500, picked so the stack grows with the bet and never drops more than 3 chips (whites trading for a red, like making change). Holding back the bet button kept this step small enough to get right.
+
 ## Takeaways
 
 - Put numbers on everything: chip counts, lens focal length, distances, how much of the frame something fills.
