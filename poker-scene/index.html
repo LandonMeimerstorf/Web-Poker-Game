@@ -1,0 +1,753 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>The Peek</title>
+<style>
+/*
+VOICE: hushed, late-night high stakes room
+IDEA: your seat at the table, seen through your own eyes
+PICTURE: full-bleed Three.js scene, cards in your hand at the bottom
+COLOUR and TYPE: felt green, warm tungsten, black; Inter for the one hint
+LAYOUT: canvas fills the screen, a single quiet hint pill
+*/
+html,body{margin:0;height:100%;background:#060504;overflow:hidden}
+canvas{display:block;touch-action:none;outline:none}
+#vig{pointer-events:none;position:fixed;inset:0;
+  background:
+    linear-gradient(to bottom,rgba(4,3,2,.92) 0%,rgba(4,3,2,.35) 14%,transparent 30%),
+    radial-gradient(ellipse 85% 75% at 50% 62%,transparent 50%,rgba(0,0,0,.7) 100%)}
+#hint{position:fixed;left:50%;bottom:max(22px,env(safe-area-inset-bottom));transform:translateX(-50%);
+  font:500 15px/1.3 Inter,system-ui,-apple-system,sans-serif;color:#efe4cc;white-space:nowrap;
+  background:rgba(12,9,7,.62);padding:11px 18px;border-radius:999px;border:1px solid rgba(239,228,204,.16);
+  backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);pointer-events:none;transition:opacity 1.2s ease}
+#hint.hide{opacity:0}
+#err{display:none;position:fixed;inset:0;place-items:center;color:#efe4cc;font:16px/1.5 system-ui,sans-serif;text-align:center;padding:24px}
+@media (max-width:480px){#hint{font-size:13px;padding:9px 14px}}
+</style>
+<script type="importmap">
+{"imports":{
+  "three":"https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+  "three/addons/":"https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+}}
+</script>
+</head>
+<body>
+<div id="vig"></div>
+<div id="hint">Drag your cards up to peek, down to hide</div>
+<div id="err">This scene needs WebGL, which isn't available in this browser.</div>
+<script type="module">
+import * as THREE from 'three';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+
+const TAU = Math.PI * 2, rad = d => d * Math.PI / 180;
+const V3 = THREE.Vector3, UPV = new V3(0, 1, 0);
+let seed = 11;
+const rnd = () => (seed = (seed * 16807) % 2147483647, (seed - 1) / 2147483646);
+const R = (a, b) => a + rnd() * (b - a);
+const TABLE_Y = 0.78;
+const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+/* ---------- renderer / scene / camera ---------- */
+let renderer;
+try { renderer = new THREE.WebGLRenderer({ antialias: true }); }
+catch (e) { document.getElementById('err').style.display = 'grid'; throw e; }
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.0;
+document.body.prepend(renderer.domElement);
+const canvas = renderer.domElement;
+canvas.tabIndex = 0;
+canvas.setAttribute('aria-label', 'Poker table. Drag your two cards up to peek at them, or use the up and down arrow keys.');
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x060504);
+scene.fog = new THREE.Fog(0x060504, 4.2, 10.5);
+const pmrem = new THREE.PMREMGenerator(renderer);
+scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+scene.environmentIntensity = 0.12;
+
+const camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.05, 40);
+camera.rotation.order = 'YXZ';
+const CAM = new V3(0, 1.17, 1.8);
+let basePitch = 0;
+function fitCamera() {
+  const a = innerWidth / innerHeight;
+  camera.aspect = a;
+  camera.fov = a < 0.8 ? 66 : a < 1.2 ? 58 : 50;
+  // keep the top of the frame just above eye level so nobody's face is ever in view
+  basePitch = rad(camera.fov / 2 - 1.5);
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+}
+fitCamera();
+addEventListener('resize', fitCamera);
+
+/* ---------- canvas texture helpers ---------- */
+const maxAniso = renderer.capabilities.getMaxAnisotropy();
+function canvasTex(w, h, draw, srgb = true) {
+  const c = document.createElement('canvas'); c.width = w; c.height = h;
+  const g = c.getContext('2d'); draw(g, w, h);
+  const t = new THREE.CanvasTexture(c);
+  if (srgb) t.colorSpace = THREE.SRGBColorSpace;
+  t.anisotropy = maxAniso;
+  return t;
+}
+function rr(g, x, y, w, h, r) {
+  g.beginPath(); g.moveTo(x + r, y); g.lineTo(x + w - r, y); g.quadraticCurveTo(x + w, y, x + w, y + r);
+  g.lineTo(x + w, y + h - r); g.quadraticCurveTo(x + w, y + h, x + w - r, y + h); g.lineTo(x + r, y + h);
+  g.quadraticCurveTo(x, y + h, x, y + h - r); g.lineTo(x, y + r); g.quadraticCurveTo(x, y, x + r, y); g.closePath();
+}
+function spade(g, cx, cy, s) {
+  const P = (x, y) => [cx + x * s, cy + y * s];
+  g.beginPath(); g.moveTo(...P(0, -0.5));
+  g.bezierCurveTo(...P(0.16, -0.27), ...P(0.5, -0.12), ...P(0.5, 0.1));
+  g.bezierCurveTo(...P(0.5, 0.31), ...P(0.24, 0.38), ...P(0.05, 0.21));
+  g.bezierCurveTo(...P(0.07, 0.36), ...P(0.13, 0.45), ...P(0.22, 0.5));
+  g.lineTo(...P(-0.22, 0.5));
+  g.bezierCurveTo(...P(-0.13, 0.45), ...P(-0.07, 0.36), ...P(-0.05, 0.21));
+  g.bezierCurveTo(...P(-0.24, 0.38), ...P(-0.5, 0.31), ...P(-0.5, 0.1));
+  g.bezierCurveTo(...P(-0.5, -0.12), ...P(-0.16, -0.27), ...P(0, -0.5));
+  g.closePath();
+}
+function noise(g, w, h, amt, tint = [1, 1, 1]) {
+  const id = g.getImageData(0, 0, w, h), d = id.data;
+  for (let i = 0; i < d.length; i += 4) {
+    const n = (Math.random() - 0.5) * amt;
+    d[i] += n * tint[0]; d[i + 1] += n * tint[1]; d[i + 2] += n * tint[2];
+  }
+  g.putImageData(id, 0, 0);
+}
+
+/* ---------- room ---------- */
+const carpet = canvasTex(256, 256, (g, w, h) => {
+  g.fillStyle = '#1a0a0c'; g.fillRect(0, 0, w, h);
+  g.strokeStyle = 'rgba(150,110,50,.35)'; g.lineWidth = 3;
+  for (const [x, y] of [[64, 64], [192, 192]]) {
+    g.beginPath(); g.moveTo(x, y - 46); g.lineTo(x + 46, y); g.lineTo(x, y + 46); g.lineTo(x - 46, y); g.closePath(); g.stroke();
+    g.beginPath(); g.arc(x, y, 14, 0, TAU); g.stroke();
+  }
+  noise(g, w, h, 18);
+});
+carpet.wrapS = carpet.wrapT = THREE.RepeatWrapping; carpet.repeat.set(26, 26);
+const floor = new THREE.Mesh(new THREE.PlaneGeometry(40, 40), new THREE.MeshStandardMaterial({ map: carpet, roughness: 1 }));
+floor.rotation.x = -Math.PI / 2; floor.receiveShadow = true; scene.add(floor);
+
+// distant casino glow (bokeh)
+const bokehTex = canvasTex(128, 128, (g, w) => {
+  const r = g.createRadialGradient(w / 2, w / 2, 0, w / 2, w / 2, w / 2);
+  r.addColorStop(0, 'rgba(255,255,255,1)'); r.addColorStop(0.55, 'rgba(255,255,255,.55)'); r.addColorStop(1, 'rgba(255,255,255,0)');
+  g.fillStyle = r; g.fillRect(0, 0, w, w);
+});
+const bokehCols = [0xffb347, 0xff7a3d, 0xffd27a, 0xd94a4a, 0x7fb8ff, 0xffe9b8];
+for (let i = 0; i < 46; i++) {
+  const a = R(0, TAU), d = R(6.5, 10);
+  const m = new THREE.SpriteMaterial({ map: bokehTex, color: bokehCols[i % 6], transparent: true, opacity: R(0.12, 0.32), blending: THREE.AdditiveBlending, depthWrite: false, fog: false });
+  const s = new THREE.Sprite(m); const sc = R(0.25, 0.7);
+  s.scale.set(sc, sc, 1); s.position.set(Math.sin(a) * d, R(0.55, 1.6), Math.cos(a) * d - 1.5);
+  s.userData = { o: m.opacity, ph: R(0, TAU), sp: R(0.3, 1.1) };
+  scene.add(s); (scene.userData.bokeh ||= []).push(s);
+}
+
+/* ---------- lights ---------- */
+scene.add(new THREE.HemisphereLight(0x463a2e, 0x0a0706, 0.7));
+const key = new THREE.SpotLight(0xffd7a3, 52, 9, 0.7, 0.75, 2);
+key.position.set(0, 3.05, 0.1); key.target.position.set(0, TABLE_Y, 0.15);
+key.castShadow = true; key.shadow.mapSize.set(2048, 2048); key.shadow.bias = -0.0003; key.shadow.normalBias = 0.0015;
+key.shadow.camera.near = 1; key.shadow.camera.far = 5; key.shadow.radius = 4;
+scene.add(key, key.target);
+const fill = new THREE.SpotLight(0xffe6c4, 1.6, 4, 0.2, 0.9, 2);
+fill.position.set(-0.3, 2.3, 2.1); fill.target.position.set(0, TABLE_Y, 1.15);
+scene.add(fill, fill.target);
+const glow = new THREE.PointLight(0xffcf9a, 7, 6, 2); glow.position.set(0, 1.75, -0.2); scene.add(glow);
+const rimL = new THREE.PointLight(0xff9a55, 3.2, 7, 2); rimL.position.set(-2.8, 1.6, -2.6); scene.add(rimL);
+const rimR = new THREE.PointLight(0x9fb6ff, 2.2, 7, 2); rimR.position.set(2.9, 1.5, -2.2); scene.add(rimR);
+
+/* ---------- table ---------- */
+const FELT_R = 1.36;
+const feltTex = canvasTex(1024, 1024, (g, w, h) => {
+  g.fillStyle = '#08321d'; g.fillRect(0, 0, w, h);
+  noise(g, w, h, 16, [0.5, 1, 0.65]);
+  const rg = g.createRadialGradient(w / 2, h / 2, w * 0.05, w / 2, h / 2, w * 0.5);
+  rg.addColorStop(0, 'rgba(40,110,70,.08)'); rg.addColorStop(0.6, 'rgba(0,0,0,0)'); rg.addColorStop(1, 'rgba(0,0,0,.5)');
+  g.fillStyle = rg; g.fillRect(0, 0, w, h);
+  g.strokeStyle = 'rgba(210,192,132,.30)';
+  g.lineWidth = 3; g.beginPath(); g.arc(w / 2, h / 2, w * 0.5 * 0.79, 0, TAU); g.stroke();
+  g.lineWidth = 1.4; g.beginPath(); g.arc(w / 2, h / 2, w * 0.5 * 0.772, 0, TAU); g.stroke();
+  const txt = "NO LIMIT · TEXAS HOLD'EM", n = txt.length, Rt = w * 0.5 * 0.52, span = 1.45;
+  g.font = '600 23px Georgia, "Times New Roman", serif'; g.fillStyle = 'rgba(218,196,132,.34)';
+  g.textAlign = 'center'; g.textBaseline = 'middle';
+  for (let i = 0; i < n; i++) {
+    const th = Math.PI / 2 + span / 2 - span * (i + 0.5) / n;
+    g.save(); g.translate(w / 2 + Math.cos(th) * Rt, h / 2 + Math.sin(th) * Rt); g.rotate(th - Math.PI / 2); g.fillText(txt[i], 0, 0); g.restore();
+  }
+});
+const felt = new THREE.Mesh(new THREE.CircleGeometry(FELT_R, 128), new THREE.MeshStandardMaterial({ map: feltTex, roughness: 0.96, metalness: 0, envMapIntensity: 0.2 }));
+felt.rotation.x = -Math.PI / 2; felt.position.y = TABLE_Y; felt.receiveShadow = true; scene.add(felt);
+
+const woodTex = canvasTex(1024, 1024, (g, w, h) => {
+  g.fillStyle = '#2a0f08'; g.fillRect(0, 0, w, h);
+  for (let i = 0; i < 260; i++) {
+    g.strokeStyle = `rgba(${R(60, 110) | 0},${R(22, 40) | 0},${R(10, 20) | 0},${R(0.15, 0.45)})`;
+    g.lineWidth = R(1, 4); const y = R(0, h);
+    g.beginPath(); g.moveTo(0, y); g.bezierCurveTo(w * 0.3, y + R(-20, 20), w * 0.7, y + R(-20, 20), w, y + R(-10, 10)); g.stroke();
+  }
+});
+const woodMat = new THREE.MeshPhysicalMaterial({ map: woodTex, roughness: 0.38, clearcoat: 1, clearcoatRoughness: 0.18 });
+const track = new THREE.Mesh(new THREE.RingGeometry(FELT_R - 0.002, 1.445, 128, 1), woodMat);
+track.rotation.x = -Math.PI / 2; track.position.y = TABLE_Y + 0.004; track.receiveShadow = true; scene.add(track);
+
+const leather = new THREE.MeshPhysicalMaterial({ color: 0x0d0b0a, roughness: 0.62, clearcoat: 0.15, clearcoatRoughness: 0.55, envMapIntensity: 0.15 });
+const rail = new THREE.Mesh(new THREE.TorusGeometry(1.525, 0.088, 28, 180), leather);
+rail.rotation.x = -Math.PI / 2; rail.position.y = TABLE_Y + 0.02; rail.castShadow = rail.receiveShadow = true; scene.add(rail);
+const apron = new THREE.Mesh(new THREE.CylinderGeometry(1.6, 1.52, 0.14, 128, 1, true), woodMat);
+apron.position.y = TABLE_Y - 0.08; scene.add(apron);
+const base = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.55, TABLE_Y - 0.15, 48), new THREE.MeshStandardMaterial({ color: 0x0c0907, roughness: 0.6 }));
+base.position.y = (TABLE_Y - 0.15) / 2; scene.add(base);
+
+/* ---------- chips (instanced) ---------- */
+const CHIP = { r: 0.021, t: 0.0036 };
+const chipDefs = [
+  { c: '#b3121f', e: '#f2efe6', d: '5' }, { c: '#151515', e: '#e9e2cf', d: '100' }, { c: '#0f6b3a', e: '#f2efe6', d: '25' },
+  { c: '#1d3d9e', e: '#f2efe6', d: '50' }, { c: '#5a2a86', e: '#f0d36b', d: '500' }, { c: '#e8e3d6', e: '#1d3d9e', d: '1' },
+  { c: '#cf7419', e: '#151515', d: '1K' }
+];
+const chipMats = chipDefs.map(cd => {
+  const side = canvasTex(256, 16, (g, w, h) => {
+    g.fillStyle = cd.c; g.fillRect(0, 0, w, h); g.fillStyle = cd.e;
+    for (let i = 0; i < 8; i++) g.fillRect(i * w / 8 + w / 40, 0, w / 22, h);
+  });
+  const top = canvasTex(256, 256, (g, w, h) => {
+    g.fillStyle = cd.c; g.fillRect(0, 0, w, h);
+    g.save(); g.translate(w / 2, h / 2); g.fillStyle = cd.e;
+    for (let i = 0; i < 8; i++) { g.save(); g.rotate(i * TAU / 8 + TAU / 32); g.fillRect(-11, -w / 2, 22, 28); g.restore(); }
+    g.strokeStyle = cd.e; g.lineWidth = 5; g.beginPath(); g.arc(0, 0, w * 0.33, 0, TAU); g.stroke();
+    g.setLineDash([7, 8]); g.lineWidth = 2; g.beginPath(); g.arc(0, 0, w * 0.285, 0, TAU); g.stroke(); g.setLineDash([]);
+    g.font = '700 50px Georgia, serif'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(cd.d, 0, 4);
+    g.restore(); noise(g, w, h, 10);
+  });
+  const ms = new THREE.MeshStandardMaterial({ map: side, roughness: 0.5 });
+  const mt = new THREE.MeshStandardMaterial({ map: top, roughness: 0.4 });
+  return [ms, mt, mt];
+});
+const chipGeo = new THREE.CylinderGeometry(CHIP.r, CHIP.r, CHIP.t, 40);
+const chipLists = chipDefs.map(() => []);
+const _q = new THREE.Quaternion(), _e = new THREE.Euler(), ONE = new V3(1, 1, 1);
+function addChip(ci, x, y, z, rx = 0, rz = 0) {
+  _e.set(rx, R(0, TAU), rz); _q.setFromEuler(_e);
+  chipLists[ci].push(new THREE.Matrix4().compose(new V3(x, y, z), _q.clone(), ONE));
+}
+function addStack(x, z, n, ci, mix = 0, y0 = TABLE_Y) {
+  for (let i = 0; i < n; i++) {
+    const c = rnd() < mix ? (rnd() * chipDefs.length | 0) : ci;
+    addChip(c, x + R(-1, 1) * 0.0011, y0 + CHIP.t * (i + 0.5) + 0.0003, z + R(-1, 1) * 0.0011);
+  }
+  return y0 + CHIP.t * n;
+}
+// the pot
+{
+  const spots = [[0, 0]];
+  for (let k = 0; k < 6; k++) spots.push([Math.cos(k * TAU / 6) * 0.046, Math.sin(k * TAU / 6) * 0.046]);
+  for (let k = 0; k < 12; k++) spots.push([Math.cos(k * TAU / 12 + 0.26) * 0.091, Math.sin(k * TAU / 12 + 0.26) * 0.091]);
+  for (let k = 0; k < 18; k++) if (rnd() < 0.6) spots.push([Math.cos(k * TAU / 18) * 0.137, Math.sin(k * TAU / 18) * 0.137]);
+  spots.forEach(([x, z], i) => addStack(x, z - 0.02, (R(14, 38) | 0) - (Math.hypot(x, z) > 0.06 ? 7 : 0) - (Math.hypot(x, z) > 0.11 ? 7 : 0), i % chipDefs.length, 0.18));
+  for (let i = 0; i < 16; i++) {
+    const a = R(0, TAU), d = R(0.18, 0.3), tilt = rnd() < 0.35;
+    const n = rnd() < 0.3 ? 2 + (rnd() * 3 | 0) : 1;
+    for (let j = 0; j < n; j++)
+      addChip(rnd() * chipDefs.length | 0, Math.cos(a) * d + j * R(-0.006, 0.006), TABLE_Y + CHIP.t * (j + 0.5) + (tilt ? 0.006 : 0.0003),
+        Math.sin(a) * d - 0.02 + j * R(-0.006, 0.006), tilt ? R(-0.25, 0.25) : 0, tilt ? R(-0.25, 0.25) : 0);
+  }
+}
+// my stacks
+[[0.215, 1.15, 1, 22], [0.261, 1.15, 2, 16], [0.238, 1.195, 0, 26], [0.284, 1.195, 4, 9], [0.192, 1.195, 3, 13], [0.307, 1.15, 6, 11]]
+  .forEach(([x, z, c, n]) => addStack(x, z, n, c, 0.05));
+
+/* ---------- cards ---------- */
+const CW = 0.0756, CL = 0.1056, CT = 0.0008, NS = 24, TW = 640, TH = 894;
+function cardShape(g, w, h) { rr(g, 4, 4, w - 8, h - 8, 40); }
+const backTex = canvasTex(TW, TH, (g, w, h) => {
+  cardShape(g, w, h); g.fillStyle = '#d9d3c6'; g.fill();
+  const m = 34; rr(g, m, m, w - 2 * m, h - 2 * m, 22); g.fillStyle = '#4d0814'; g.fill();
+  g.save(); g.clip();
+  g.strokeStyle = 'rgba(224,186,112,.2)'; g.lineWidth = 1.5;
+  for (let k = -h; k < w + h; k += 42) {
+    g.beginPath(); g.moveTo(k, 0); g.lineTo(k + h, h); g.stroke();
+    g.beginPath(); g.moveTo(k, h); g.lineTo(k + h, 0); g.stroke();
+  }
+  g.restore();
+  g.strokeStyle = '#d9b56c'; g.lineWidth = 4; rr(g, m + 16, m + 16, w - 2 * m - 32, h - 2 * m - 32, 14); g.stroke();
+  g.beginPath(); g.ellipse(w / 2, h / 2, 100, 132, 0, 0, TAU); g.fillStyle = '#3c050d'; g.fill(); g.lineWidth = 5; g.stroke();
+  g.lineWidth = 2; g.beginPath(); g.ellipse(w / 2, h / 2, 88, 120, 0, 0, TAU); g.stroke();
+  spade(g, w / 2, h / 2 - 4, 120); g.fillStyle = '#d9b56c'; g.fill();
+  noise(g, w, h, 8);
+});
+function faceBase(g, w, h, rank) {
+  cardShape(g, w, h); g.fillStyle = '#fbf8f0'; g.fill();
+  g.lineWidth = 2; g.strokeStyle = 'rgba(0,0,0,.18)'; g.stroke();
+  for (const rot of [0, Math.PI]) {
+    g.save(); g.translate(w / 2, h / 2); g.rotate(rot); g.translate(-w / 2, -h / 2);
+    g.fillStyle = '#111'; g.font = '700 92px Georgia, "Times New Roman", serif'; g.textAlign = 'center';
+    g.fillText(rank, 70, 112); spade(g, 70, 170, 58); g.fill();
+    g.restore();
+  }
+}
+const aceTex = canvasTex(TW, TH, (g, w, h) => {
+  faceBase(g, w, h, 'A');
+  spade(g, w / 2, h / 2 - 6, 340); g.fillStyle = '#0c0c0c'; g.fill();
+  spade(g, w / 2, h / 2 - 2, 292); g.strokeStyle = 'rgba(251,248,240,.9)'; g.lineWidth = 3; g.stroke();
+  spade(g, w / 2, h / 2 + 2, 250); g.lineWidth = 1.5; g.stroke();
+  g.fillStyle = '#fbf8f0'; g.beginPath(); g.ellipse(w / 2, h / 2 - 10, 34, 46, 0, 0, TAU); g.fill();
+  spade(g, w / 2, h / 2 - 12, 40); g.fillStyle = '#0c0c0c'; g.fill();
+  noise(g, w, h, 6);
+});
+const kingTex = canvasTex(TW, TH, (g, w, h) => {
+  faceBase(g, w, h, 'K');
+  const fx = 122, fy = 150, fw = w - 2 * fx, fh = h - 2 * fy, cx = w / 2, mid = h / 2;
+  g.save(); g.beginPath(); g.rect(fx, fy, fw, fh); g.clip();
+  const half = () => {
+    g.fillStyle = '#f4e8cb'; g.fillRect(fx, fy, fw, fh / 2);
+    // sword behind
+    g.fillStyle = '#c7ccd4'; g.strokeStyle = '#222'; g.lineWidth = 2.5;
+    g.beginPath(); g.moveTo(cx - 108, fy + 8); g.lineTo(cx - 96, fy + 8); g.lineTo(cx - 92, mid - 40); g.lineTo(cx - 112, mid - 40); g.closePath(); g.fill(); g.stroke();
+    g.fillStyle = '#d9a63a'; g.fillRect(cx - 132, mid - 46, 60, 12); g.strokeRect(cx - 132, mid - 46, 60, 12);
+    // robe
+    g.fillStyle = '#b4202b'; g.beginPath();
+    g.moveTo(fx, mid); g.lineTo(fx + 20, fy + 230); g.quadraticCurveTo(cx - 90, fy + 182, cx - 40, fy + 186);
+    g.lineTo(cx + 40, fy + 186); g.quadraticCurveTo(cx + 90, fy + 182, fx + fw - 20, fy + 230); g.lineTo(fx + fw, mid); g.closePath(); g.fill(); g.stroke();
+    g.fillStyle = '#1f3c8c'; g.beginPath(); g.moveTo(cx - 60, fy + 190); g.lineTo(cx, mid - 6); g.lineTo(cx + 60, fy + 190); g.lineTo(cx + 34, fy + 186); g.lineTo(cx, fy + 240); g.lineTo(cx - 34, fy + 186); g.closePath(); g.fill(); g.stroke();
+    g.fillStyle = '#d9a63a';
+    for (let i = 0; i < 9; i++) for (let j = 0; j < 3; j++) {
+      const x = fx + 30 + i * 36, y = fy + 232 + j * 22 + (i % 2) * 11;
+      if (Math.abs(x - cx) < 70) continue;
+      g.beginPath(); g.moveTo(x, y - 6); g.lineTo(x + 6, y); g.lineTo(x, y + 6); g.lineTo(x - 6, y); g.closePath(); g.fill();
+    }
+    // face, hair, beard
+    g.fillStyle = '#8a8378'; g.beginPath(); g.ellipse(cx, fy + 128, 60, 62, 0, 0, TAU); g.fill(); g.stroke();
+    g.fillStyle = '#f0cfa8'; g.beginPath(); g.ellipse(cx, fy + 124, 44, 54, 0, 0, TAU); g.fill(); g.stroke();
+    g.fillStyle = '#7b7368'; g.beginPath(); g.moveTo(cx - 44, fy + 128); g.quadraticCurveTo(cx - 40, fy + 205, cx, fy + 214);
+    g.quadraticCurveTo(cx + 40, fy + 205, cx + 44, fy + 128); g.quadraticCurveTo(cx, fy + 165, cx - 44, fy + 128); g.fill(); g.stroke();
+    g.lineWidth = 3; g.beginPath(); g.moveTo(cx - 26, fy + 112); g.lineTo(cx - 10, fy + 114); g.moveTo(cx + 10, fy + 114); g.lineTo(cx + 26, fy + 112);
+    g.moveTo(cx, fy + 116); g.lineTo(cx - 4, fy + 138); g.lineTo(cx + 3, fy + 140);
+    g.moveTo(cx - 20, fy + 152); g.quadraticCurveTo(cx, fy + 144, cx + 20, fy + 152); g.stroke();
+    // crown
+    g.lineWidth = 2.5; g.fillStyle = '#d9a63a'; g.beginPath();
+    g.moveTo(cx - 50, fy + 82); g.lineTo(cx - 54, fy + 30); g.lineTo(cx - 26, fy + 56); g.lineTo(cx, fy + 18); g.lineTo(cx + 26, fy + 56); g.lineTo(cx + 54, fy + 30); g.lineTo(cx + 50, fy + 82); g.closePath(); g.fill(); g.stroke();
+    [['#b4202b', -30], ['#1f3c8c', 0], ['#b4202b', 30]].forEach(([c, dx]) => { g.fillStyle = c; g.beginPath(); g.arc(cx + dx, fy + 70, 7, 0, TAU); g.fill(); g.stroke(); });
+    spade(g, fx + 34, fy + 40, 40); g.fillStyle = '#111'; g.fill();
+  };
+  half(); g.translate(w / 2, h / 2); g.rotate(Math.PI); g.translate(-w / 2, -h / 2); half();
+  g.restore();
+  g.strokeStyle = '#1f3c8c'; g.lineWidth = 5; g.strokeRect(fx, fy, fw, fh);
+  g.strokeStyle = '#111'; g.lineWidth = 2; g.strokeRect(fx - 6, fy - 6, fw + 12, fh + 12);
+  g.beginPath(); g.moveTo(fx, mid); g.lineTo(fx + fw, mid); g.stroke();
+  noise(g, w, h, 6);
+});
+const cardMat = t => new THREE.MeshPhysicalMaterial({ map: t, roughness: 0.82, alphaTest: 0.5, envMapIntensity: 0.1, specularIntensity: 0.3 });
+const backMat = cardMat(backTex);
+
+function makeCardGeo() {
+  const geo = new THREE.BufferGeometry(), nv = (NS + 1) * 2;
+  const pos = new Float32Array(nv * 2 * 3), uv = new Float32Array(nv * 2 * 2), idx = [];
+  for (let L = 0; L < 2; L++) for (let i = 0; i <= NS; i++) for (let j = 0; j < 2; j++) {
+    const k = L * nv + i * 2 + j; uv[k * 2] = j; uv[k * 2 + 1] = i / NS;
+  }
+  for (let i = 0; i < NS; i++) { const a = i * 2, b = a + 2, c = a + 1, d = a + 3; idx.push(a, b, c, c, b, d); }
+  for (let i = 0; i < NS; i++) { const a = nv + i * 2, b = a + 2, c = a + 1, d = a + 3; idx.push(a, c, b, c, d, b); }
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+  geo.setIndex(idx); geo.addGroup(0, NS * 6, 0); geo.addGroup(NS * 6, NS * 6, 1);
+  return geo;
+}
+function bendCard(c) {
+  const pos = c.geo.attributes.position.array, th = c.ang, b = c.bend, ds = CL / NS, nv = (NS + 1) * 2;
+  let y = 0, z = 0;
+  for (let i = 0; i <= NS; i++) {
+    if (i > 0) { const pm = th * ((1 - b) + 2 * b * ((i - 0.5) / NS)); y += Math.sin(pm) * ds; z += Math.cos(pm) * ds; }
+    const ph = th * ((1 - b) + 2 * b * (i / NS)), ny = Math.cos(ph), nz = -Math.sin(ph);
+    for (let L = 0; L < 2; L++) {
+      const off = (L ? -1 : 1) * CT / 2;
+      for (let j = 0; j < 2; j++) {
+        const k = (L * nv + i * 2 + j) * 3;
+        pos[k] = (j ? 1 : -1) * CW / 2; pos[k + 1] = y + ny * off; pos[k + 2] = z + nz * off;
+      }
+    }
+  }
+  c.geo.attributes.position.needsUpdate = true; c.geo.computeVertexNormals(); c.geo.computeBoundingSphere();
+}
+const PIVOT_Z = 1.185, MAX_LIFT = 1.2;
+const myCards = [[aceTex, -0.046, 0.06], [kingTex, 0.046, -0.05]].map(([tex, x, ry]) => {
+  const geo = makeCardGeo();
+  const mesh = new THREE.Mesh(geo, [backMat, cardMat(tex)]);
+  mesh.position.set(x, TABLE_Y + 0.0012, PIVOT_Z); mesh.rotation.y = ry;
+  mesh.castShadow = true; mesh.receiveShadow = true; scene.add(mesh);
+  const c = { geo, mesh, ang: 0, vel: 0, target: 0, bend: 0 };
+  bendCard(c); return c;
+});
+// a generous invisible grab zone over both cards (easier on touch screens)
+const pad = new THREE.Mesh(new THREE.PlaneGeometry(0.3, 0.2), new THREE.MeshBasicMaterial({ visible: false }));
+pad.rotation.x = -Math.PI / 2; pad.position.set(0, TABLE_Y + 0.002, PIVOT_Z + CL / 2); scene.add(pad);
+
+// dealer button (you're on the button)
+{
+  const t = canvasTex(256, 256, (g, w) => {
+    g.fillStyle = '#f4f1ea'; g.fillRect(0, 0, w, w);
+    g.strokeStyle = '#1a1a1a'; g.lineWidth = 4; g.beginPath(); g.arc(w / 2, w / 2, w * 0.4, 0, TAU); g.stroke();
+    g.fillStyle = '#1a1a1a'; g.font = '700 44px Georgia, serif'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText('DEALER', w / 2, w / 2 + 2);
+  });
+  const side = new THREE.MeshStandardMaterial({ color: 0xe9e5dc, roughness: 0.35 }), top = new THREE.MeshStandardMaterial({ map: t, roughness: 0.3 });
+  const b = new THREE.Mesh(new THREE.CylinderGeometry(0.034, 0.034, 0.012, 40), [side, top, side]);
+  b.position.set(-0.23, TABLE_Y + 0.006, 1.14); b.rotation.y = 2.6; b.castShadow = true; scene.add(b);
+}
+
+/* ---------- people ---------- */
+const torsoGeo = new THREE.LatheGeometry([
+  [0, 0], [0.165, 0], [0.176, 0.08], [0.19, 0.2], [0.205, 0.32], [0.215, 0.42], [0.212, 0.48], [0.19, 0.53],
+  [0.14, 0.57], [0.078, 0.6], [0.062, 0.64], [0.06, 0.73], [0, 0.73]
+].map(([x, y]) => new THREE.Vector2(x, y)), 40);
+const UA = 0.30, FA = 0.31;
+const upperGeo = new THREE.CylinderGeometry(0.047, 0.056, UA, 18);
+const foreGeo = new THREE.CylinderGeometry(0.035, 0.046, FA, 18);
+const ballGeo = new THREE.SphereGeometry(1, 18, 14);
+const fingerGeo = new THREE.CapsuleGeometry(0.0085, 0.04, 4, 10).rotateX(Math.PI / 2);
+const cuffGeo = new THREE.CylinderGeometry(0.039, 0.041, 0.028, 18);
+const chairGeo = new THREE.BoxGeometry(0.52, 0.62, 0.09, 4, 4, 1);
+const chairMat = new THREE.MeshStandardMaterial({ color: 0x2c0c0f, roughness: 0.55 });
+const smallCardGeo = new THREE.PlaneGeometry(CW, CL).rotateX(-Math.PI / 2).translate(0, 0, -CL / 2);
+const glassMat = new THREE.MeshPhysicalMaterial({ color: 0xffffff, roughness: 0.04, transparent: true, opacity: 0.22, clearcoat: 1, envMapIntensity: 2, depthWrite: false });
+const whiskyMat = new THREE.MeshStandardMaterial({ color: 0x9a4a14, roughness: 0.15, transparent: true, opacity: 0.88, emissive: 0x3a1404, emissiveIntensity: 0.6 });
+const iceMat = new THREE.MeshPhysicalMaterial({ color: 0xeaf4ff, roughness: 0.1, transparent: true, opacity: 0.5, depthWrite: false });
+
+function makeGlass() {
+  const g = new THREE.Group();
+  const shell = new THREE.Mesh(new THREE.CylinderGeometry(0.037, 0.032, 0.09, 28, 1, true), glassMat); shell.position.y = 0.045;
+  const bottom = new THREE.Mesh(new THREE.CylinderGeometry(0.032, 0.032, 0.012, 28), glassMat); bottom.position.y = 0.006;
+  const liq = new THREE.Mesh(new THREE.CylinderGeometry(0.033, 0.031, 0.034, 28), whiskyMat); liq.position.y = 0.03;
+  const ice = new THREE.Mesh(new THREE.BoxGeometry(0.026, 0.026, 0.026), iceMat); ice.position.set(0.004, 0.044, -0.003); ice.rotation.set(0.3, 0.5, 0.2);
+  g.add(shell, bottom, liq, ice); liq.castShadow = true;
+  scene.add(g); return g;
+}
+function std(color, rough = 0.85) { return new THREE.MeshStandardMaterial({ color, roughness: rough }); }
+
+const SEATS = [
+  { a: rad(62), top: 0x2a2c31, sleeve: 0x2a2c31, skin: 0xe2b597, shirt: 0xf0f0ea, tie: 0x6d1420, cuff: 0xf0f0ea },
+  { a: rad(107), top: 0x1c2945, sleeve: 0x1c2945, skin: 0xc48d60, shirt: 0xa7c6e6, cuff: 0xa7c6e6 },
+  { a: rad(146), top: 0x171717, sleeve: 0x171717, skin: 0x6a4330, glass: true },
+  { a: Math.PI, dealer: true, top: 0x0d0d0d, sleeve: 0xefeee8, skin: 0xd8a887, shirt: 0xefeee8, bow: true },
+  { a: rad(214), top: 0x5c1622, sleeve: 0x5c1622, skin: 0xb88864, bet: true },
+  { a: rad(253), top: 0x7a8089, sleeve: 0x7a8089, skin: 0xf0c6a6, watch: true, glass: true, bet: true },
+  { a: rad(298), top: 0x40271a, sleeve: 0x40271a, skin: 0xe3ae8a, shirt: 0x1b1b1b, rough: 0.5 },
+];
+
+const players = [];
+function addPart(geo, mat) { const m = new THREE.Mesh(geo, mat); m.castShadow = true; m.receiveShadow = true; scene.add(m); return m; }
+function makeHand(skin, isRight) {
+  const h = new THREE.Group();
+  const palm = new THREE.Mesh(ballGeo, skin); palm.scale.set(0.041, 0.017, 0.05); palm.position.set(0, 0, 0.03); h.add(palm);
+  for (let f = 0; f < 4; f++) {
+    const fi = new THREE.Mesh(fingerGeo, skin);
+    fi.position.set((f - 1.5) * 0.0175, -0.004, 0.09 - Math.abs(f - 1.5) * 0.007); fi.rotation.x = 0.12; h.add(fi);
+  }
+  const th = new THREE.Mesh(fingerGeo, skin); th.position.set(isRight ? 0.04 : -0.04, -0.005, 0.04); th.rotation.y = isRight ? 0.75 : -0.75; h.add(th);
+  h.traverse(o => { if (o.isMesh) o.castShadow = true; });
+  scene.add(h); return h;
+}
+
+SEATS.forEach((cfg, pi) => {
+  const RS = 1.88;
+  const group = new THREE.Group();
+  group.position.set(Math.sin(cfg.a) * RS, 0, Math.cos(cfg.a) * RS);
+  group.rotation.y = cfg.a + Math.PI; scene.add(group); group.updateMatrixWorld(true);
+  const topMat = std(cfg.top, cfg.rough ?? 0.85), sleeveMat = std(cfg.sleeve, cfg.rough ?? 0.85), skinMat = std(cfg.skin, 0.62);
+
+  const chair = new THREE.Mesh(chairGeo, chairMat); chair.position.set(0, 0.86, -0.24); chair.rotation.x = -0.08; chair.castShadow = true; group.add(chair);
+  const torso = new THREE.Group(); torso.position.set(0, 0.62, 0); group.add(torso);
+  const body = new THREE.Mesh(torsoGeo, topMat); body.scale.set(1, 1, 0.62); body.castShadow = body.receiveShadow = true; torso.add(body);
+  if (cfg.shirt) {
+    const wTop = cfg.dealer ? 0.085 : 0.06, yBot = cfg.dealer ? 0.27 : 0.34;
+    const vg = new THREE.BufferGeometry().setFromPoints([new V3(-wTop, 0.565, 0.094), new V3(0, yBot, 0.132), new V3(wTop, 0.565, 0.094)]);
+    vg.computeVertexNormals();
+    const v = new THREE.Mesh(vg, std(cfg.shirt, 0.7)); v.position.z = 0.004; torso.add(v);
+    if (cfg.tie) {
+      const tg = new THREE.BufferGeometry().setFromPoints([
+        new V3(-0.011, 0.555, 0.102), new V3(0, 0.33, 0.139), new V3(0.011, 0.555, 0.102),
+        new V3(-0.011, 0.555, 0.102), new V3(-0.019, 0.37, 0.135), new V3(0, 0.33, 0.139),
+        new V3(0.011, 0.555, 0.102), new V3(0, 0.33, 0.139), new V3(0.019, 0.37, 0.135)]);
+      tg.computeVertexNormals(); const t = new THREE.Mesh(tg, std(cfg.tie, 0.5)); t.position.z = 0.007; torso.add(t);
+    }
+    if (cfg.bow) {
+      const bw = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.022, 0.012), std(0x080808, 0.5));
+      bw.position.set(0, 0.565, 0.1); bw.rotation.x = -0.6; torso.add(bw);
+    }
+  }
+  const p = {
+    cfg, group, torso, dealer: !!cfg.dealer, ph: R(0, TAU), lean: 0.08, baseLean: R(0.04, 0.12),
+    X: new V3(1, 0, 0).applyQuaternion(group.quaternion), Z: new V3(0, 0, 1).applyQuaternion(group.quaternion),
+    chipSide: rnd() < 0.5 ? -1 : 1, cardLift: 0, cardLiftT: 0, hands: [], cardPivots: []
+  };
+  // face-down hole cards
+  for (let k = 0; k < 2; k++) {
+    const piv = new THREE.Group(); piv.position.set(-0.012 + k * 0.026, TABLE_Y + 0.0012 + k * 0.0009, 0.715); piv.rotation.y = k ? 0.14 : -0.04;
+    const m = new THREE.Mesh(smallCardGeo, backMat); m.castShadow = true; piv.add(m); group.add(piv); p.cardPivots.push(piv);
+  }
+  // chips
+  const L2W = (x, y, z) => group.localToWorld(new V3(x, y, z));
+  if (!p.dealer) {
+    const s = p.chipSide, base = (rnd() * 7) | 0; let topY = TABLE_Y;
+    [[0.205, 0.6], [0.251, 0.6], [0.228, 0.643], [0.274, 0.643], [0.182, 0.643]].forEach(([x, z], i) => {
+      if (i > 2 && rnd() < 0.4) return;
+      const w = L2W(s * x, 0, z); const y = addStack(w.x, w.z, (R(6, 24) | 0), (base + i) % 7, 0.08); if (i === 2) topY = y;
+    });
+    p.stackLocal = new V3(s * 0.228, topY, 0.643);
+    if (cfg.bet) { const w = L2W(R(-0.05, 0.05), 0, 0.93); addStack(w.x, w.z, (R(3, 8) | 0), (rnd() * 7) | 0, 0.3); }
+  } else {
+    // chip tray
+    const rollTex = canvasTex(16, 256, (g, w, h) => { g.fillStyle = '#fff'; g.fillRect(0, 0, w, h); g.fillStyle = 'rgba(0,0,0,.45)'; for (let y = 0; y < h; y += 8) g.fillRect(0, y, w, 1.5); });
+    const tray = new THREE.Mesh(new THREE.BoxGeometry(0.27, 0.024, 0.13), std(0x0b0b0b, 0.35));
+    tray.position.set(0, TABLE_Y + 0.012, 0.62); tray.castShadow = true; group.add(tray);
+    for (let i = 0; i < 6; i++) {
+      const roll = new THREE.Mesh(new THREE.CylinderGeometry(0.019, 0.019, 0.115, 24), new THREE.MeshStandardMaterial({ color: chipDefs[i].c, map: rollTex, roughness: 0.45 }));
+      roll.rotation.x = Math.PI / 2; roll.position.set(-0.106 + i * 0.0425, TABLE_Y + 0.03, 0.62); group.add(roll);
+    }
+    const deck = new THREE.Mesh(new THREE.BoxGeometry(CW, 0.016, CL), [std(0xf2eee4, 0.6), std(0xf2eee4, 0.6), backMat, std(0xf2eee4, 0.6), std(0xf2eee4, 0.6), std(0xf2eee4, 0.6)]);
+    deck.castShadow = true; scene.add(deck);
+    p.deck = deck; p.deckRest = L2W(0.0, TABLE_Y + 0.008, 0.46); deck.position.copy(p.deckRest); deck.quaternion.copy(group.quaternion);
+    p.dg = 'idle'; p.dt0 = 0; p.ddur = 3;
+  }
+  if (cfg.glass) {
+    p.glass = makeGlass(); p.glassSide = -p.chipSide;
+    p.glassRest = L2W(-p.chipSide * 0.33, TABLE_Y, 0.53); p.glass.position.copy(p.glassRest); p.glassAttached = false;
+  }
+  // arms
+  for (const s of [-1, 1]) {
+    const h = {
+      s, idx: s < 0 ? 0 : 1, g: 'idle', t0: -R(0, 4), dur: R(1, 4), ph: R(0, TAU),
+      base: new V3(), micro: new V3(), poleMode: 'side', cur: new V3(), pole: new V3(), k: R(2.8, 3.8),
+      upper: addPart(upperGeo, sleeveMat), fore: addPart(foreGeo, sleeveMat),
+      sh: addPart(ballGeo, sleeveMat), el: addPart(ballGeo, sleeveMat),
+      hand: makeHand(skinMat, s < 0),
+      cuff: cfg.cuff ? addPart(cuffGeo, std(cfg.cuff, 0.7)) : cfg.watch ? addPart(cuffGeo, new THREE.MeshStandardMaterial({ color: 0xc9a24a, metalness: 1, roughness: 0.3 })) : null,
+    };
+    if (cfg.watch && s > 0) { h.cuff.visible = false; }
+    h.sh.scale.setScalar(0.059); h.el.scale.setScalar(0.047);
+    h.cur.copy(L2W(s * 0.17, 0.815, 0.47));
+    h.pole.copy(p.X).multiplyScalar(s * 0.9).add(new V3(0, -1, 0)).addScaledVector(p.Z, -0.35).normalize();
+    p.hands.push(h);
+  }
+  players.push(p);
+});
+// chips are built once every stack is placed
+chipLists.forEach((list, ci) => {
+  const im = new THREE.InstancedMesh(chipGeo, chipMats[ci], list.length);
+  list.forEach((m, i) => im.setMatrixAt(i, m));
+  im.castShadow = im.receiveShadow = true; scene.add(im);
+});
+
+/* ---------- gestures ---------- */
+const GEST = { idle: [3, 2.5, 6], tap: [1.6, 1.6, 3.2], chips: [1.8, 2.5, 5], cards: [1, 2.2, 3.4], lap: [0.9, 3, 7], chin: [0.7, 3, 6], drink: [1.4, 5.5, 6.5] };
+const BUSY = ['chin', 'drink', 'cards', 'lap'];
+function pickGesture(p, h, T) {
+  const other = p.hands[1 - h.idx], opts = [];
+  for (const [k, [w]] of Object.entries(GEST)) {
+    if (k === 'drink' && !(p.glass && p.glassSide === h.s)) continue;
+    if (k === 'chips' && h.s !== p.chipSide) continue;
+    if (BUSY.includes(k) && BUSY.includes(other.g)) continue;
+    if (k === h.g && k !== 'idle') continue;
+    opts.push([k, w]);
+  }
+  let sum = opts.reduce((a, o) => a + o[1], 0), r = Math.random() * sum;
+  for (const [k, w] of opts) { if ((r -= w) <= 0) { h.g = k; break; } }
+  const [, lo, hi] = GEST[h.g]; h.t0 = T; h.dur = lo + Math.random() * (hi - lo);
+}
+function handLocal(p, h, T) {
+  const s = h.s, u = (T - h.t0) / h.dur, b = h.base, m = h.micro;
+  m.set(0, 0, 0); h.poleMode = 'side';
+  if (p.dealer) {
+    if (p.dg === 'shuffle') {
+      b.set(s * 0.07, 0.84, 0.43);
+      const c = 0.5 + 0.5 * Math.sin(T * 7); m.set(s * 0.028 * c, 0.008 * Math.abs(Math.sin(T * 7)), 0);
+    } else {
+      b.set(s * 0.215, 0.815, 0.44 + 0.01 * Math.sin(T * 0.4 + h.ph));
+      if (p.dg === 'tap' && s > 0) m.y = 0.011 * Math.max(0, Math.sin(T * 10));
+    }
+    return;
+  }
+  switch (h.g) {
+    case 'tap': b.set(s * 0.15, 0.815, 0.5); m.y = 0.012 * Math.max(0, Math.sin(T * 10.5 + h.ph)); break;
+    case 'chips': {
+      const c = p.stackLocal; b.set(c.x, c.y + 0.03, c.z - 0.09);
+      m.set(0.007 * Math.cos(T * 6.5), 0.004 * Math.abs(Math.sin(T * 13)), 0.007 * Math.sin(T * 6.5)); break;
+    }
+    case 'cards':
+      b.set(s * 0.03, 0.812, 0.575);
+      if (u > 0.3 && u < 0.78) p.cardLiftT = 0.32;
+      break;
+    case 'lap': b.set(s * 0.13, 0.6, 0.18); break;
+    case 'chin': b.set(s * 0.035, 1.28, 0.15); h.poleMode = 'front'; break;
+    case 'drink': {
+      const reach = new V3(-p.chipSide * 0.33, TABLE_Y + 0.07, 0.455);
+      if (u < 0.22) b.copy(reach);
+      else if (u < 0.6) { b.set(s * 0.06, 1.28, 0.17); h.poleMode = 'front'; }
+      else if (u < 0.84) b.copy(reach);
+      else b.set(s * 0.17, 0.815, 0.47);
+      p.glassAttached = u > 0.19 && u < 0.84;
+      break;
+    }
+    default: b.set(s * 0.17 + 0.012 * Math.sin(T * 0.5 + h.ph), 0.815, 0.47 + 0.015 * Math.sin(T * 0.37 + h.ph));
+  }
+}
+
+const _S = new V3(), _W = new V3(), _E = new V3(), _d = new V3(), _p = new V3(), _t = new V3(), _hd = new V3(), _pl = new V3();
+function solveIK(S, T, a, b, pole, outE) {
+  _d.subVectors(T, S); let dist = _d.length();
+  dist = THREE.MathUtils.clamp(dist, Math.abs(a - b) + 1e-3, a + b - 1e-3); _d.normalize();
+  const cosA = (a * a + dist * dist - b * b) / (2 * a * dist), sinA = Math.sqrt(Math.max(0, 1 - cosA * cosA));
+  _p.copy(pole).addScaledVector(_d, -pole.dot(_d)).normalize();
+  outE.copy(S).addScaledVector(_d, cosA * a).addScaledVector(_p, sinA * a);
+}
+function placeSeg(mesh, A, B) {
+  mesh.position.addVectors(A, B).multiplyScalar(0.5);
+  _t.subVectors(B, A).normalize(); mesh.quaternion.setFromUnitVectors(UPV, _t);
+}
+const DOWN = new V3(0, -1, 0);
+function updatePlayer(p, T, dt) {
+  const br = Math.sin(T * 1.5 + p.ph);
+  p.torso.scale.set(1 + 0.006 * br, 1 + 0.006 * br, 1 + 0.014 * br);
+  let leanT = p.baseLean + 0.025 * Math.sin(T * 0.31 + p.ph);
+  if (p.hands.some(h => h.g === 'cards' || h.g === 'chips')) leanT += 0.07;
+  if (p.hands.some(h => h.g === 'chin')) leanT += 0.06;
+  if (p.hands.some(h => h.g === 'lap')) leanT -= 0.05;
+  if (p.dealer && p.dg === 'shuffle') leanT += 0.04;
+  p.lean += (leanT - p.lean) * (1 - Math.exp(-dt * 1.4));
+  p.torso.rotation.set(p.lean, 0.05 * Math.sin(T * 0.23 + p.ph * 2), 0.02 * Math.sin(T * 0.19 + p.ph));
+  p.torso.updateMatrixWorld(true);
+
+  if (p.dealer) {
+    if (T > p.dt0 + p.ddur) {
+      p.dg = p.dg === 'shuffle' ? (Math.random() < 0.5 ? 'idle' : 'tap') : (Math.random() < 0.6 ? 'shuffle' : 'idle');
+      p.dt0 = T; p.ddur = p.dg === 'shuffle' ? R(3, 5) : R(2.5, 5);
+    }
+  } else for (const h of p.hands) if (T > h.t0 + h.dur) pickGesture(p, h, T);
+
+  p.cardLiftT = 0; if (p.glass) p.glassAttached = false;
+  const kf = 1 - Math.exp(-dt * 3);
+  for (const h of p.hands) {
+    handLocal(p, h, T);
+    _W.copy(h.base); p.group.localToWorld(_W);
+    h.cur.lerp(_W, 1 - Math.exp(-dt * h.k));
+    _W.copy(h.micro).applyQuaternion(p.group.quaternion).add(h.cur);
+    p.torso.localToWorld(_S.set(h.s * 0.19, 0.5, 0.0));
+    if (h.poleMode === 'front') _pl.copy(p.Z).add(_t.set(0, -0.75, 0)).addScaledVector(p.X, h.s * 0.35);
+    else _pl.copy(p.X).multiplyScalar(h.s * 0.9).add(DOWN).addScaledVector(p.Z, -0.35);
+    h.pole.lerp(_pl.normalize(), kf);
+    solveIK(_S, _W, UA, FA, h.pole, _E);
+    _hd.subVectors(_W, _E).normalize(); const wrist = _W.copy(_E).addScaledVector(_hd, FA);
+    placeSeg(h.upper, _S, _E); placeSeg(h.fore, _E, wrist);
+    h.sh.position.copy(_S); h.el.position.copy(_E);
+    // hand: lies flat on the felt, follows the forearm when raised
+    const raise = THREE.MathUtils.clamp((wrist.y - 0.86) / 0.18, 0, 1);
+    const fd = _t.copy(_hd); _hd.y = THREE.MathUtils.lerp(fd.y * 0.12 - 0.05, fd.y, raise); _hd.normalize();
+    h.hand.position.copy(wrist); h.hand.lookAt(_d.copy(wrist).add(_hd));
+    if (h.cuff) { placeSeg(h.cuff, _d.copy(wrist).addScaledVector(fd.copy(_E).sub(wrist).normalize(), 0.024), wrist); }
+    if (p.glass && p.glassSide === h.s && p.glassAttached) {
+      p.glass.position.copy(wrist).addScaledVector(_hd, 0.05); p.glass.position.y -= 0.075;
+    }
+    h.wrist = h.wrist || new V3(); h.wrist.copy(wrist);
+  }
+  if (p.glass && !p.glassAttached) p.glass.position.lerp(p.glassRest, 1 - Math.exp(-dt * 8));
+  if (p.deck) {
+    if (p.dg === 'shuffle') {
+      _t.addVectors(p.hands[0].wrist, p.hands[1].wrist).multiplyScalar(0.5).addScaledVector(p.Z, 0.06); _t.y -= 0.012;
+      p.deck.position.lerp(_t, 1 - Math.exp(-dt * 10));
+      p.deck.rotation.set(0, 0, 0); p.deck.quaternion.copy(p.group.quaternion); p.deck.rotateX(-0.12 + 0.05 * Math.sin(T * 7));
+    } else { p.deck.position.lerp(p.deckRest, 1 - Math.exp(-dt * 5)); p.deck.quaternion.slerp(p.group.quaternion, 1 - Math.exp(-dt * 5)); }
+  }
+  p.cardLift += (p.cardLiftT - p.cardLift) * (1 - Math.exp(-dt * 5));
+  p.cardPivots.forEach((c, i) => c.rotation.x = p.cardLift * (i ? 0.85 : 1));
+}
+
+/* ---------- dust in the light ---------- */
+const dust = (() => {
+  const n = 260, pos = new Float32Array(n * 3);
+  for (let i = 0; i < n; i++) { const a = R(0, TAU), d = Math.sqrt(rnd()) * 1.3; pos.set([Math.cos(a) * d, R(0.85, 1.6), Math.sin(a) * d], i * 3); }
+  const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  const m = new THREE.PointsMaterial({ map: bokehTex, size: 0.006, color: 0xffe2b8, transparent: true, opacity: 0.35, depthWrite: false, blending: THREE.AdditiveBlending });
+  const pts = new THREE.Points(g, m); scene.add(pts); return pts;
+})();
+
+/* ---------- interaction ---------- */
+const ray = new THREE.Raycaster(), ndc = new THREE.Vector2();
+const hint = document.getElementById('hint');
+let drag = null, hover = null, hinted = false, pointer = { x: 0, y: 0 };
+function pick(e) {
+  ndc.set(e.clientX / innerWidth * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
+  ray.setFromCamera(ndc, camera);
+  const hits = ray.intersectObjects([...myCards.map(c => c.mesh), pad], false);
+  if (!hits.length) return null;
+  const c = myCards.find(c => c.mesh === hits[0].object);
+  return c || (hits[0].point.x < 0 ? myCards[0] : myCards[1]);
+}
+function setLift(card, v) {
+  card.target = THREE.MathUtils.clamp(v, 0, MAX_LIFT);
+  const other = myCards[1 - myCards.indexOf(card)];
+  other.target = card.target * 0.9;
+  if (!hinted && card.target > 0.6) { hinted = true; setTimeout(() => hint.classList.add('hide'), 1800); }
+}
+canvas.addEventListener('pointerdown', e => {
+  const c = pick(e); if (!c) return;
+  drag = { card: c, y0: e.clientY, a0: c.target, id: e.pointerId };
+  canvas.setPointerCapture(e.pointerId); canvas.style.cursor = 'grabbing'; e.preventDefault();
+});
+canvas.addEventListener('pointermove', e => {
+  pointer.x = e.clientX / innerWidth * 2 - 1; pointer.y = e.clientY / innerHeight * 2 - 1;
+  if (drag) { setLift(drag.card, drag.a0 + (drag.y0 - e.clientY) / (innerHeight * 0.26) * MAX_LIFT); return; }
+  if (e.pointerType === 'mouse') { hover = pick(e); canvas.style.cursor = hover ? 'grab' : 'default'; }
+});
+const endDrag = e => {
+  if (!drag) return;
+  for (const c of myCards) if (c.target < 0.07) c.target = 0;
+  drag = null; canvas.style.cursor = hover ? 'grab' : 'default';
+};
+canvas.addEventListener('pointerup', endDrag); canvas.addEventListener('pointercancel', endDrag);
+canvas.addEventListener('pointerleave', () => { if (!drag) hover = null; });
+addEventListener('keydown', e => {
+  if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+    e.preventDefault(); setLift(myCards[0], myCards[0].target + (e.key === 'ArrowUp' ? 0.22 : -0.22));
+  }
+});
+
+/* ---------- loop ---------- */
+const clock = new THREE.Clock();
+let look = { x: 0, y: 0 };
+renderer.setAnimationLoop(() => {
+  const dt = Math.min(clock.getDelta(), 0.05), T = clock.elapsedTime;
+  for (const p of players) updatePlayer(p, T, dt);
+
+  for (const c of myCards) {
+    const tgt = Math.max(c.target, hover && !drag ? 0.045 : 0);
+    const k = 110, damp = 2 * Math.sqrt(k) * 0.62;
+    c.vel += ((tgt - c.ang) * k - c.vel * damp) * dt; c.ang += c.vel * dt;
+    if (c.ang < 0) { c.ang = 0; c.vel = -c.vel * 0.28; }
+    const bt = 0.32 * Math.min(1, c.ang / 0.55) + THREE.MathUtils.clamp(c.vel * 0.03, -0.08, 0.12);
+    c.bend += (bt - c.bend) * (1 - Math.exp(-dt * 10));
+    bendCard(c);
+  }
+
+  for (const s of scene.userData.bokeh) s.material.opacity = s.userData.o * (0.75 + 0.25 * Math.sin(T * s.userData.sp + s.userData.ph));
+  dust.rotation.y = T * 0.015; dust.position.y = Math.sin(T * 0.2) * 0.02;
+
+  const amp = reduceMotion ? 0 : 1;
+  const lx = drag ? 0 : pointer.x, ly = drag ? 0 : Math.max(0, pointer.y);
+  look.x += (lx - look.x) * (1 - Math.exp(-dt * 2)); look.y += (ly - look.y) * (1 - Math.exp(-dt * 2));
+  camera.position.set(CAM.x + 0.006 * Math.sin(T * 0.4) * amp, CAM.y + 0.004 * Math.sin(T * 1.5) * amp, CAM.z);
+  camera.rotation.y = (-look.x * 0.045 + 0.008 * Math.sin(T * 0.21)) * amp;
+  camera.rotation.x = -basePitch - look.y * 0.025 * amp;
+  renderer.render(scene, camera);
+});
+</script>
+</body>
+</html>

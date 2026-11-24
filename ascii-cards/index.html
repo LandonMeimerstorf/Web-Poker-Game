@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ASCII Card Assets</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+<style>
+/* VOICE: asset bench, calm and exact
+   IDEA: a turntable for props before they go on set
+   PICTURE: the A and K of spades in glowing ASCII, full bleed
+   COLOUR and TYPE: near-black, card white, spade-red accents; JetBrains Mono
+   LAYOUT: render fills the screen, one control strip at the bottom */
+:root{color-scheme:dark;--ink:#e9e3d6;--dim:#8d877b;--line:rgba(255,255,255,.09);--acc:#ff3b3b}
+*{box-sizing:border-box;min-width:0}
+html,body{margin:0;height:100%;background:#0a0a0a;color:var(--ink);overflow:hidden;font:500 13px/1.3 "JetBrains Mono",ui-monospace,monospace}
+canvas{display:block;width:100%;height:100%;touch-action:none;cursor:grab}
+canvas.drag{cursor:grabbing}
+.tag{position:fixed;top:16px;left:18px;color:var(--dim);letter-spacing:.02em;pointer-events:none}
+.tag b{color:var(--ink);font-weight:700}
+.bar{position:fixed;left:50%;bottom:max(14px,env(safe-area-inset-bottom));transform:translateX(-50%);display:flex;flex-wrap:wrap;justify-content:center;align-items:center;gap:6px;
+  width:max-content;max-width:calc(100% - 20px);padding:6px;border:1px solid var(--line);border-radius:14px;background:rgba(14,14,14,.82);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px)}
+.seg{display:flex;gap:2px;padding:2px;border-radius:10px;background:rgba(255,255,255,.04)}
+button{font:inherit;color:var(--dim);background:none;border:0;border-radius:8px;min-height:40px;padding:0 12px;cursor:pointer}
+button:hover{color:var(--ink)}
+button[aria-pressed=true]{color:var(--ink);background:rgba(255,255,255,.1)}
+button:focus-visible,input:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+.go{color:#0a0a0a;background:var(--ink);font-weight:700}
+.go:hover{color:#0a0a0a;background:#fff}
+label{display:flex;align-items:center;gap:8px;padding:0 10px;color:var(--dim);min-height:40px}
+input[type=range]{width:110px;accent-color:var(--acc)}
+#toast{position:fixed;left:50%;top:16px;transform:translate(-50%,-8px);opacity:0;transition:.25s;padding:8px 14px;border-radius:999px;background:var(--ink);color:#0a0a0a;font-weight:700;pointer-events:none}
+#toast.on{opacity:1;transform:translate(-50%,0)}
+.err{position:fixed;inset:0;display:none;place-items:center;color:var(--dim);font:16px system-ui,sans-serif;text-align:center;padding:24px}
+@media (max-width:600px){.tag{display:none}input[type=range]{width:84px}button{padding:0 10px}}
+</style>
+<script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"}}</script>
+</head>
+<body>
+<div class="tag"><b>A&#9824; K&#9824;</b> &middot; ASCII card assets</div>
+<div id="toast" role="status" aria-live="polite"></div>
+<div class="err" id="err">Couldn't load the renderer. Reload to try again.</div>
+<div class="bar">
+  <div class="seg" role="group" aria-label="Asset">
+    <button data-view="pair" aria-pressed="true">Pair</button>
+    <button data-view="ace" aria-pressed="false">Ace</button>
+    <button data-view="king" aria-pressed="false">King</button>
+    <button data-view="back" aria-pressed="false">Back</button>
+  </div>
+  <div class="seg" role="group" aria-label="Palette">
+    <button data-pal="0" aria-pressed="true">Color</button>
+    <button data-pal="1" aria-pressed="false">Felt</button>
+    <button data-pal="2" aria-pressed="false">Mono</button>
+  </div>
+  <label for="detail">Detail <input id="detail" type="range" min="1" max="10" step="1" value="7"></label>
+  <button id="spin" aria-pressed="true">Spin</button>
+  <button id="copy" class="go">Copy ASCII</button>
+</div>
+
+<script type="module">
+{
+let THREE, EffectComposer, RenderPass, ShaderPass, UnrealBloomPass, OutputPass, RoomEnvironment;
+try {
+  THREE = await import('three');
+  ({ EffectComposer } = await import('three/addons/postprocessing/EffectComposer.js'));
+  ({ RenderPass } = await import('three/addons/postprocessing/RenderPass.js'));
+  ({ ShaderPass } = await import('three/addons/postprocessing/ShaderPass.js'));
+  ({ UnrealBloomPass } = await import('three/addons/postprocessing/UnrealBloomPass.js'));
+  ({ OutputPass } = await import('three/addons/postprocessing/OutputPass.js'));
+  ({ RoomEnvironment } = await import('three/addons/environments/RoomEnvironment.js'));
+} catch (e) { document.getElementById('err').style.display = 'grid'; throw e; }
+
+const TAU = Math.PI * 2;
+const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const dpr = Math.min(devicePixelRatio, 2);
+const state = { view: 'pair', spin: !reduce, detail: 7, pal: 0 };
+
+const renderer = new THREE.WebGLRenderer({ antialias: false });
+renderer.setPixelRatio(dpr);
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.0;
+document.body.prepend(renderer.domElement);
+const canvas = renderer.domElement;
+canvas.setAttribute('aria-label', 'ASCII render of the ace and king of spades. Drag to turn the cards.');
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x000000);
+scene.environment = new THREE.PMREMGenerator(renderer).fromScene(new RoomEnvironment(), 0.04).texture;
+const camera = new THREE.PerspectiveCamera(32, 1, 0.1, 100);
+
+/* ---------- card artwork (drawn bold so it survives the ASCII grid) ---------- */
+const TW = 640, TH = 896;
+function tex(draw) {
+  const c = document.createElement('canvas'); c.width = TW; c.height = TH;
+  const g = c.getContext('2d'); draw(g, TW, TH);
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 8; return t;
+}
+function spade(g, cx, cy, s) {
+  const P = (x, y) => [cx + x * s, cy + y * s];
+  g.beginPath(); g.moveTo(...P(0, -0.5));
+  g.bezierCurveTo(...P(0.16, -0.27), ...P(0.5, -0.12), ...P(0.5, 0.1));
+  g.bezierCurveTo(...P(0.5, 0.31), ...P(0.24, 0.38), ...P(0.05, 0.21));
+  g.bezierCurveTo(...P(0.07, 0.36), ...P(0.13, 0.45), ...P(0.22, 0.5));
+  g.lineTo(...P(-0.22, 0.5));
+  g.bezierCurveTo(...P(-0.13, 0.45), ...P(-0.07, 0.36), ...P(-0.05, 0.21));
+  g.bezierCurveTo(...P(-0.24, 0.38), ...P(-0.5, 0.31), ...P(-0.5, 0.1));
+  g.bezierCurveTo(...P(-0.5, -0.12), ...P(-0.16, -0.27), ...P(0, -0.5));
+  g.closePath();
+}
+function face(g, w, h, rank) {
+  g.fillStyle = '#f6f2e8'; g.fillRect(0, 0, w, h);
+  g.strokeStyle = '#b9b2a3'; g.lineWidth = 6; g.strokeRect(30, 30, w - 60, h - 60);
+  for (const rot of [0, Math.PI]) {
+    g.save(); g.translate(w / 2, h / 2); g.rotate(rot); g.translate(-w / 2, -h / 2);
+    g.fillStyle = '#0c0c0c'; g.font = '700 150px Georgia, "Times New Roman", serif'; g.textAlign = 'center';
+    g.fillText(rank, 100, 172); spade(g, 100, 262, 96); g.fill();
+    g.restore();
+  }
+}
+const aceTex = tex((g, w, h) => { face(g, w, h, 'A'); spade(g, w / 2, h / 2 - 8, 400); g.fillStyle = '#0c0c0c'; g.fill(); });
+const kingTex = tex((g, w, h) => {
+  face(g, w, h, 'K');
+  const fx = 178, fy = 196, fw = w - 2 * fx, fh = h - 2 * fy, cx = w / 2, mid = h / 2;
+  g.save(); g.beginPath(); g.rect(fx, fy, fw, fh); g.clip();
+  const half = () => {
+    g.fillStyle = '#efe2bf'; g.fillRect(fx, fy, fw, fh / 2);
+    g.lineWidth = 5; g.strokeStyle = '#151515';
+    g.fillStyle = '#c9ced6'; g.fillRect(fx + 24, fy + 6, 22, 200); g.strokeRect(fx + 24, fy + 6, 22, 200);         // sword
+    g.fillStyle = '#d9a12c'; g.fillRect(fx + 6, fy + 196, 58, 18);
+    g.fillStyle = '#c4141f'; g.beginPath();                                                                      // robe
+    g.moveTo(fx, mid); g.lineTo(fx, fy + 232); g.quadraticCurveTo(cx - 70, fy + 188, cx, fy + 190);
+    g.quadraticCurveTo(cx + 70, fy + 188, fx + fw, fy + 232); g.lineTo(fx + fw, mid); g.closePath(); g.fill(); g.stroke();
+    g.fillStyle = '#1f3fa0'; g.beginPath(); g.moveTo(cx - 58, fy + 196); g.lineTo(cx, mid); g.lineTo(cx + 58, fy + 196); g.closePath(); g.fill(); g.stroke();
+    g.fillStyle = '#d9a12c'; for (let i = 0; i < 4; i++) { g.beginPath(); g.arc(cx, fy + 214 + i * 12, 4, 0, TAU); g.fill(); }
+    g.fillStyle = '#e9c49a'; g.beginPath(); g.ellipse(cx, fy + 118, 46, 56, 0, 0, TAU); g.fill(); g.stroke();      // face
+    g.fillStyle = '#5a5248'; g.beginPath(); g.moveTo(cx - 46, fy + 124); g.quadraticCurveTo(cx - 40, fy + 196, cx, fy + 206);  // beard
+    g.quadraticCurveTo(cx + 40, fy + 196, cx + 46, fy + 124); g.quadraticCurveTo(cx, fy + 158, cx - 46, fy + 124); g.fill(); g.stroke();
+    g.fillStyle = '#151515'; g.fillRect(cx - 26, fy + 104, 14, 6); g.fillRect(cx + 12, fy + 104, 14, 6);
+    g.fillStyle = '#d9a12c'; g.beginPath();                                                                      // crown
+    g.moveTo(cx - 52, fy + 74); g.lineTo(cx - 56, fy + 18); g.lineTo(cx - 26, fy + 46); g.lineTo(cx, fy + 8);
+    g.lineTo(cx + 26, fy + 46); g.lineTo(cx + 56, fy + 18); g.lineTo(cx + 52, fy + 74); g.closePath(); g.fill(); g.stroke();
+    g.fillStyle = '#c4141f'; g.beginPath(); g.arc(cx, fy + 60, 9, 0, TAU); g.fill();
+    spade(g, fx + fw - 42, fy + 42, 50); g.fillStyle = '#0c0c0c'; g.fill();
+  };
+  half(); g.translate(w / 2, h / 2); g.rotate(Math.PI); g.translate(-w / 2, -h / 2); half();
+  g.restore();
+  g.lineWidth = 8; g.strokeStyle = '#1f3fa0'; g.strokeRect(fx, fy, fw, fh);
+  g.lineWidth = 4; g.strokeStyle = '#151515'; g.beginPath(); g.moveTo(fx, mid); g.lineTo(fx + fw, mid); g.stroke();
+});
+const backTex = tex((g, w, h) => {
+  g.fillStyle = '#f6f2e8'; g.fillRect(0, 0, w, h);
+  const m = 40; g.fillStyle = '#9a1020'; g.fillRect(m, m, w - 2 * m, h - 2 * m);
+  g.save(); g.beginPath(); g.rect(m, m, w - 2 * m, h - 2 * m); g.clip();
+  g.strokeStyle = '#e2b450'; g.lineWidth = 9;
+  for (let k = -h; k < w + h; k += 78) {
+    g.beginPath(); g.moveTo(k, 0); g.lineTo(k + h, h); g.stroke();
+    g.beginPath(); g.moveTo(k, h); g.lineTo(k + h, 0); g.stroke();
+  }
+  g.restore();
+  g.lineWidth = 10; g.strokeStyle = '#e2b450'; g.strokeRect(m + 22, m + 22, w - 2 * m - 44, h - 2 * m - 44);
+  g.fillStyle = '#5e0812'; g.beginPath(); g.ellipse(w / 2, h / 2, 128, 168, 0, 0, TAU); g.fill(); g.stroke();
+  spade(g, w / 2, h / 2 - 4, 170); g.fillStyle = '#f1c65e'; g.fill();
+});
+
+/* ---------- 3D card: thin rounded slab, art on both faces ---------- */
+const CW = 2.5, CH = 3.5, CT = 0.035, CR = 0.18;
+function cardGeo() {
+  const s = new THREE.Shape(), x = -CW / 2, y = -CH / 2;
+  s.moveTo(x + CR, y); s.lineTo(x + CW - CR, y); s.quadraticCurveTo(x + CW, y, x + CW, y + CR);
+  s.lineTo(x + CW, y + CH - CR); s.quadraticCurveTo(x + CW, y + CH, x + CW - CR, y + CH);
+  s.lineTo(x + CR, y + CH); s.quadraticCurveTo(x, y + CH, x, y + CH - CR); s.lineTo(x, y + CR); s.quadraticCurveTo(x, y, x + CR, y);
+  const geo = new THREE.ExtrudeGeometry(s, { depth: CT, bevelEnabled: false, curveSegments: 10 });
+  geo.translate(0, 0, -CT / 2);
+  const p = geo.attributes.position, uv = geo.attributes.uv, caps = geo.groups[0];
+  for (let i = caps.start; i < caps.start + caps.count; i++) {
+    const front = p.getZ(i) > 0;
+    uv.setXY(i, front ? (p.getX(i) + CW / 2) / CW : 1 - (p.getX(i) + CW / 2) / CW, (p.getY(i) + CH / 2) / CH);
+  }
+  // split the cap group into back (z<0) and front (z>0) so each face gets its own art
+  const half = caps.count / 2, side = geo.groups[1];
+  geo.clearGroups();
+  const firstFront = p.getZ(caps.start) > 0;
+  geo.addGroup(caps.start, half, firstFront ? 1 : 2);
+  geo.addGroup(caps.start + half, half, firstFront ? 2 : 1);
+  geo.addGroup(side.start, side.count, 0);
+  return geo;
+}
+const geo = cardGeo();
+const mat = map => new THREE.MeshPhysicalMaterial({ map, roughness: 0.38, clearcoat: 0.6, clearcoatRoughness: 0.25, envMapIntensity: 0.5 });
+const edgeMat = new THREE.MeshStandardMaterial({ color: 0xe8e2d4, roughness: 0.6 });
+const backMat = mat(backTex);
+const ace = new THREE.Mesh(geo, [edgeMat, mat(aceTex), backMat]);
+const king = new THREE.Mesh(geo, [edgeMat, mat(kingTex), backMat]);
+const rig = new THREE.Group(); rig.add(ace, king); scene.add(rig);
+
+// target poses per view: [x, y, z, rotZ, rotY, visible]
+const POSES = {
+  pair: { ace: [-0.72, 0.02, -0.04, 0.13, 0, 1], king: [0.72, -0.04, 0.04, -0.1, 0, 1], w: 4.6 },
+  ace:  { ace: [0, 0, 0, 0, 0, 1], king: [2.6, 0, -1, -0.2, 0, 0], w: 2.6 },
+  king: { ace: [-2.6, 0, -1, 0.2, 0, 0], king: [0, 0, 0, 0, 0, 1], w: 2.6 },
+  back: { ace: [0, 0, 0, 0, Math.PI, 1], king: [2.6, 0, -1, -0.2, Math.PI, 0], w: 2.6 },
+};
+for (const [m, k] of [[ace, 'ace'], [king, 'king']]) { const p = POSES.pair[k]; m.position.set(p[0], p[1], p[2]); m.rotation.set(0, p[4], p[3]); m.userData.s = 1; }
+
+/* ---------- lights: white key in front, warm rim behind, green felt bounce below ---------- */
+const keyL = new THREE.PointLight(0xffffff, 48, 0, 2); keyL.position.set(2.4, 2.8, 6); scene.add(keyL);
+const rim = new THREE.PointLight(0xffb066, 90, 0, 2); rim.position.set(-3, 3.5, -4); scene.add(rim);
+const bounce = new THREE.PointLight(0x2fbf72, 25, 0, 2); bounce.position.set(0, -4, 3); scene.add(bounce);
+scene.add(new THREE.AmbientLight(0xffffff, 0.06));
+
+/* ---------- glyph atlas, characters ordered dark -> bright ---------- */
+const CHARS = ' .:-=+*#%@';
+try { await document.fonts.load('700 30px "JetBrains Mono"'); } catch (e) {}
+const atlas = document.createElement('canvas'), actx = atlas.getContext('2d');
+const glyphTex = new THREE.CanvasTexture(atlas);
+glyphTex.minFilter = THREE.LinearFilter; glyphTex.generateMipmaps = false;
+let cellW = 5, cellH = 8;
+function buildAtlas() {
+  cellH = Math.round((15 - state.detail) * dpr); cellW = Math.max(2, Math.round(cellH * 0.6));
+  const S = 4; atlas.width = cellW * S * CHARS.length; atlas.height = cellH * S;
+  actx.fillStyle = '#000'; actx.fillRect(0, 0, atlas.width, atlas.height);
+  actx.fillStyle = '#fff'; actx.textAlign = 'center'; actx.textBaseline = 'middle';
+  actx.font = `700 ${cellH * S * 0.92}px "JetBrains Mono", monospace`;
+  [...CHARS].forEach((ch, i) => actx.fillText(ch, (i + 0.5) * cellW * S, cellH * S * 0.54));
+  glyphTex.dispose(); glyphTex.needsUpdate = true;
+  if (ascii) ascii.uniforms.cell.value.set(cellW, cellH);
+}
+
+const vert = 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }';
+let ascii = null;
+ascii = new ShaderPass({
+  uniforms: {
+    tDiffuse: { value: null }, tGlyphs: { value: glyphTex }, res: { value: new THREE.Vector2(1, 1) },
+    cell: { value: new THREE.Vector2(5, 8) }, n: { value: CHARS.length }, time: { value: 0 }, pal: { value: 0 }
+  },
+  vertexShader: vert,
+  fragmentShader: `
+    uniform sampler2D tDiffuse, tGlyphs; uniform vec2 res, cell; uniform float n, time, pal; varying vec2 vUv;
+    float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1,311.7))) * 43758.5453); }
+    void main(){
+      vec2 px = vUv * res;
+      vec2 id = floor(px / cell);
+      vec3 c = texture2D(tDiffuse, (id + 0.5) * cell / res).rgb;
+      float m = max(c.r, max(c.g, c.b));
+      float l = 1.0 - exp(-m * 1.8);
+      float spark = step(0.993, hash(id + floor(time * 8.0))) * smoothstep(0.35, 0.6, l);
+      l = clamp(l + spark * 0.4, 0.0, 1.0);
+      float idx = floor(l * (n - 1.0) + 0.5);
+      vec2 local = fract(px / cell);
+      float g = texture2D(tGlyphs, vec2((idx + local.x) / n, local.y)).r;
+      vec3 hue = c / max(m, 1e-4);
+      if (pal > 0.5 && pal < 1.5) hue = vec3(0.32, 1.0, 0.56);
+      else if (pal > 1.5) hue = vec3(1.0, 0.94, 0.84);
+      vec2 q = vUv * 2.0 - 1.0; float vig = smoothstep(1.75, 0.55, length(q));
+      vec3 col = hue * (0.22 + 1.6 * l) * vig + spark * vec3(1.4, 1.2, 1.0);
+      gl_FragColor = vec4(vec3(0.0032) + g * col, 1.0);
+    }`
+});
+buildAtlas();
+
+const composer = new EffectComposer(renderer);
+composer.addPass(new RenderPass(scene, camera));
+composer.addPass(ascii);
+const bloom = new UnrealBloomPass(new THREE.Vector2(1, 1), 0.32, 0.3, 0.6);
+composer.addPass(bloom);
+composer.addPass(new OutputPass());
+
+function resize() {
+  const w = innerWidth, h = innerHeight;
+  renderer.setSize(w, h, false); composer.setSize(w, h);
+  camera.aspect = w / h; camera.updateProjectionMatrix();
+  ascii.uniforms.res.value.set(w * dpr, h * dpr);
+}
+addEventListener('resize', resize); resize();
+
+/* ---------- interaction ---------- */
+let yaw = -0.35, pitch = 0.06, vel = 0, drag = null;
+canvas.addEventListener('pointerdown', e => { drag = { x: e.clientX, y: e.clientY }; vel = 0; canvas.setPointerCapture(e.pointerId); canvas.classList.add('drag'); });
+canvas.addEventListener('pointermove', e => {
+  if (!drag) return;
+  const dx = e.clientX - drag.x, dy = e.clientY - drag.y; drag.x = e.clientX; drag.y = e.clientY;
+  yaw += dx * 0.009; vel = dx * 0.009 * 60; pitch = THREE.MathUtils.clamp(pitch + dy * 0.004, -0.6, 0.6);
+});
+const end = () => { drag = null; canvas.classList.remove('drag'); };
+canvas.addEventListener('pointerup', end); canvas.addEventListener('pointercancel', end);
+
+const press = (sel, attr, val) => document.querySelectorAll(sel).forEach(b => b.setAttribute('aria-pressed', String(b.dataset[attr] === val)));
+document.querySelectorAll('[data-view]').forEach(b => b.addEventListener('click', () => {
+  state.view = b.dataset.view; press('[data-view]', 'view', state.view);
+  yaw = Math.round(yaw / TAU) * TAU + (state.view === 'pair' ? -0.35 : -0.25);
+}));
+document.querySelectorAll('[data-pal]').forEach(b => b.addEventListener('click', () => {
+  state.pal = +b.dataset.pal; press('[data-pal]', 'pal', b.dataset.pal); ascii.uniforms.pal.value = state.pal;
+}));
+document.getElementById('detail').addEventListener('input', e => { state.detail = +e.target.value; buildAtlas(); });
+const spinBtn = document.getElementById('spin');
+spinBtn.setAttribute('aria-pressed', String(state.spin));
+spinBtn.addEventListener('click', () => { state.spin = !state.spin; spinBtn.setAttribute('aria-pressed', String(state.spin)); });
+
+// Copy ASCII: renders the current frame at one pixel per cell and maps it to the same character ramp
+const toast = document.getElementById('toast'); let toastT;
+function say(msg) { toast.textContent = msg; toast.classList.add('on'); clearTimeout(toastT); toastT = setTimeout(() => toast.classList.remove('on'), 1800); }
+document.getElementById('copy').addEventListener('click', async () => {
+  const cols = Math.floor(innerWidth * dpr / cellW), rows = Math.floor(innerHeight * dpr / cellH);
+  const rt = new THREE.WebGLRenderTarget(cols, rows, { type: THREE.FloatType });
+  renderer.setRenderTarget(rt); renderer.render(scene, camera); renderer.setRenderTarget(null);
+  const buf = new Float32Array(cols * rows * 4);
+  renderer.readRenderTargetPixels(rt, 0, 0, cols, rows, buf); rt.dispose();
+  const lines = [];
+  for (let r = rows - 1; r >= 0; r--) {
+    let s = '';
+    for (let c = 0; c < cols; c++) {
+      const i = (r * cols + c) * 4, m = Math.max(buf[i], buf[i + 1], buf[i + 2]);
+      s += CHARS[Math.round((1 - Math.exp(-m * 1.8)) * (CHARS.length - 1))];
+    }
+    lines.push(s.replace(/\s+$/, ''));
+  }
+  while (lines.length && !lines[0]) lines.shift();
+  while (lines.length && !lines[lines.length - 1]) lines.pop();
+  const ind = Math.min(...lines.filter(Boolean).map(l => l.match(/^ */)[0].length));
+  const text = lines.map(l => l.slice(ind)).join('\n');
+  try { await navigator.clipboard.writeText(text); say(`Copied ${Math.max(...lines.map(l => l.length - ind))} x ${lines.length} characters`); }
+  catch (e) { say('Your browser blocked the clipboard'); }
+});
+
+/* ---------- animate ---------- */
+const clock = new THREE.Clock();
+const k = (dt, r) => 1 - Math.exp(-dt * r);
+renderer.setAnimationLoop(() => {
+  const dt = Math.min(clock.getDelta(), 0.05), t = clock.elapsedTime, mo = reduce ? 0 : 1;
+  if (!drag) {
+    if (state.spin) yaw += dt * 0.55;
+    yaw += vel * dt; vel *= Math.exp(-dt * 3);
+    pitch += (0.06 - pitch) * k(dt, 1.5);
+  }
+  rig.rotation.set(pitch + 0.03 * Math.sin(t * 0.7) * mo, yaw, 0);
+  const pose = POSES[state.view];
+  for (const [m, key] of [[ace, 'ace'], [king, 'king']]) {
+    const p = pose[key], f = k(dt, 6);
+    m.position.x += (p[0] - m.position.x) * f; m.position.y += (p[1] + 0.04 * Math.sin(t * 1.1 + (key === 'ace' ? 0 : 2)) * mo - m.position.y) * f;
+    m.position.z += (p[2] - m.position.z) * f;
+    m.rotation.z += (p[3] - m.rotation.z) * f; m.rotation.y += (p[4] - m.rotation.y) * f;
+    m.userData.s += (p[5] - m.userData.s) * f; m.scale.setScalar(Math.max(0.001, m.userData.s)); m.visible = m.userData.s > 0.02;
+  }
+  // frame the asset so it fills the screen at any aspect
+  const halfH = Math.max(CH * 0.7, pose.w * 0.66 / camera.aspect);
+  const dist = halfH / Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
+  camera.position.z += (dist - camera.position.z) * k(dt, 4);
+  camera.position.y = 0.15; camera.lookAt(0, 0, 0);
+  ascii.uniforms.time.value = t;
+  composer.render();
+});
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ASCII Chip Assets</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+<style>
+/* VOICE: asset bench, calm and exact
+   IDEA: a turntable for props before they go on set
+   PICTURE: white, red, green and black poker chips in glowing ASCII
+   COLOUR and TYPE: near-black, chip colours carried by the glyphs; JetBrains Mono
+   LAYOUT: render fills the screen, one control strip at the bottom */
+:root{color-scheme:dark;--ink:#e9e3d6;--dim:#8d877b;--line:rgba(255,255,255,.09);--acc:#ff3b3b}
+*{box-sizing:border-box;min-width:0}
+html,body{margin:0;height:100%;background:#0a0a0a;color:var(--ink);overflow:hidden;font:500 13px/1.3 "JetBrains Mono",ui-monospace,monospace}
+canvas{display:block;width:100%;height:100%;touch-action:none;cursor:grab}
+canvas.drag{cursor:grabbing}
+.tag{position:fixed;top:16px;left:18px;color:var(--dim);letter-spacing:.02em;pointer-events:none}
+.tag b{color:var(--ink);font-weight:700}
+.bar{position:fixed;left:50%;bottom:max(14px,env(safe-area-inset-bottom));transform:translateX(-50%);display:flex;flex-wrap:wrap;justify-content:center;align-items:center;gap:6px;
+  width:max-content;max-width:calc(100% - 20px);padding:6px;border:1px solid var(--line);border-radius:14px;background:rgba(14,14,14,.82);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px)}
+.seg{display:flex;flex-wrap:wrap;gap:2px;padding:2px;border-radius:10px;background:rgba(255,255,255,.04)}
+button{font:inherit;color:var(--dim);background:none;border:0;border-radius:8px;min-height:40px;padding:0 12px;cursor:pointer}
+button:hover{color:var(--ink)}
+button[aria-pressed=true]{color:var(--ink);background:rgba(255,255,255,.1)}
+button:focus-visible,input:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+.go{color:#0a0a0a;background:var(--ink);font-weight:700}
+.go:hover{color:#0a0a0a;background:#fff}
+label{display:flex;align-items:center;gap:8px;padding:0 10px;color:var(--dim);min-height:40px}
+input[type=range]{width:110px;accent-color:var(--acc)}
+#toast{position:fixed;left:50%;top:16px;transform:translate(-50%,-8px);opacity:0;transition:.25s;padding:8px 14px;border-radius:999px;background:var(--ink);color:#0a0a0a;font-weight:700;pointer-events:none}
+#toast.on{opacity:1;transform:translate(-50%,0)}
+.err{position:fixed;inset:0;display:none;place-items:center;color:var(--dim);font:16px system-ui,sans-serif;text-align:center;padding:24px}
+@media (max-width:600px){.tag{display:none}input[type=range]{width:84px}button{padding:0 9px}}
+</style>
+<script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"}}</script>
+</head>
+<body>
+<div class="tag"><b>1 &middot; 5 &middot; 25 &middot; 100</b> &middot; ASCII chip assets</div>
+<div id="toast" role="status" aria-live="polite"></div>
+<div class="err" id="err">Couldn't load the renderer. Reload to try again.</div>
+<div class="bar">
+  <div class="seg" role="group" aria-label="Asset">
+    <button data-view="all" aria-pressed="true">All</button>
+    <button data-view="0" aria-pressed="false">White</button>
+    <button data-view="1" aria-pressed="false">Red</button>
+    <button data-view="2" aria-pressed="false">Green</button>
+    <button data-view="3" aria-pressed="false">Black</button>
+    <button data-view="stack" aria-pressed="false">Stacks</button>
+  </div>
+  <div class="seg" role="group" aria-label="Palette">
+    <button data-pal="0" aria-pressed="true">Color</button>
+    <button data-pal="1" aria-pressed="false">Felt</button>
+    <button data-pal="2" aria-pressed="false">Mono</button>
+  </div>
+  <label for="detail">Detail <input id="detail" type="range" min="1" max="10" step="1" value="7"></label>
+  <button id="spin" aria-pressed="true">Spin</button>
+  <button id="copy" class="go">Copy ASCII</button>
+</div>
+
+<script type="module">
+{
+let THREE, EffectComposer, RenderPass, ShaderPass, UnrealBloomPass, OutputPass, RoomEnvironment;
+try {
+  THREE = await import('three');
+  ({ EffectComposer } = await import('three/addons/postprocessing/EffectComposer.js'));
+  ({ RenderPass } = await import('three/addons/postprocessing/RenderPass.js'));
+  ({ ShaderPass } = await import('three/addons/postprocessing/ShaderPass.js'));
+  ({ UnrealBloomPass } = await import('three/addons/postprocessing/UnrealBloomPass.js'));
+  ({ OutputPass } = await import('three/addons/postprocessing/OutputPass.js'));
+  ({ RoomEnvironment } = await import('three/addons/environments/RoomEnvironment.js'));
+} catch (e) { document.getElementById('err').style.display = 'grid'; throw e; }
+
+const TAU = Math.PI * 2;
+const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const dpr = Math.min(devicePixelRatio, 2);
+const state = { view: 'all', spin: !reduce, detail: 7, pal: 0 };
+
+const renderer = new THREE.WebGLRenderer({ antialias: false });
+renderer.setPixelRatio(dpr);
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+document.body.prepend(renderer.domElement);
+const canvas = renderer.domElement;
+canvas.setAttribute('aria-label', 'ASCII render of white, red, green and black poker chips. Drag to turn them.');
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x000000);
+scene.environment = new THREE.PMREMGenerator(renderer).fromScene(new RoomEnvironment(), 0.04).texture;
+const camera = new THREE.PerspectiveCamera(32, 1, 0.1, 200);
+
+/* ---------- chip designs ----------
+   What makes it read as a poker chip and not a wafer:
+   8 bold edge spots that wrap from the face over the rim, a printed inlay with the value,
+   a ring of molded ticks, and real thickness so the striped edge shows when it turns. */
+const CHIPS = [
+  { name: 'White', body: '#ece7da', spot: '#1f3fa0', inlay: '#c9d8f4', num: '#14286e', val: '1' },
+  { name: 'Red',   body: '#d81e2a', spot: '#f4efe4', inlay: '#f3e6d6', num: '#b3111c', val: '5' },
+  { name: 'Green', body: '#14a557', spot: '#f4efe4', inlay: '#e3efe2', num: '#0b6e37', val: '25' },
+  { name: 'Black', body: '#303030', spot: '#f4efe4', inlay: '#e6e1d6', num: '#121212', val: '100' },
+];
+const SPOTS = 8, SPOT_W = 0.27;                   // spot angular width in radians
+const spotAngle = k => (k + 0.5) * TAU / SPOTS;   // symmetric set, so face and rim line up
+const FS = 1024;
+function mk(w, h, draw, srgb = true) {
+  const c = document.createElement('canvas'); c.width = w; c.height = h;
+  draw(c.getContext('2d'), w, h);
+  const t = new THREE.CanvasTexture(c); if (srgb) t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 8; return t;
+}
+function sector(g, r0, r1, a, w) { g.beginPath(); g.arc(0, 0, r1, a - w / 2, a + w / 2); g.arc(0, 0, r0, a + w / 2, a - w / 2, true); g.closePath(); }
+function spadeAt(g, cx, cy, s) {
+  const P = (x, y) => [cx + x * s, cy + y * s];
+  g.beginPath(); g.moveTo(...P(0, -0.5));
+  g.bezierCurveTo(...P(0.16, -0.27), ...P(0.5, -0.12), ...P(0.5, 0.1));
+  g.bezierCurveTo(...P(0.5, 0.31), ...P(0.24, 0.38), ...P(0.05, 0.21));
+  g.bezierCurveTo(...P(0.07, 0.36), ...P(0.13, 0.45), ...P(0.22, 0.5));
+  g.lineTo(...P(-0.22, 0.5));
+  g.bezierCurveTo(...P(-0.13, 0.45), ...P(-0.07, 0.36), ...P(-0.05, 0.21));
+  g.bezierCurveTo(...P(-0.24, 0.38), ...P(-0.5, 0.31), ...P(-0.5, 0.1));
+  g.bezierCurveTo(...P(-0.5, -0.12), ...P(-0.16, -0.27), ...P(0, -0.5));
+  g.closePath();
+}
+function drawFace(g, cd, mirror) {
+  const R = FS / 2;
+  g.fillStyle = cd.body; g.fillRect(0, 0, FS, FS);
+  g.save(); g.translate(R, R); if (mirror) g.scale(-1, 1);
+  g.fillStyle = cd.spot;
+  for (let k = 0; k < SPOTS; k++) sector(g, R * 0.79, R * 1.02, spotAngle(k), SPOT_W), g.fill();
+  // molded ticks between the spots and the inlay
+  for (let k = 0; k < 16; k++) { g.save(); g.rotate(k * TAU / 16); g.fillRect(-12, -R * 0.755, 24, R * 0.08); g.restore(); }
+  g.lineWidth = 10; g.strokeStyle = cd.spot; g.beginPath(); g.arc(0, 0, R * 0.6, 0, TAU); g.stroke();
+  // inlay label
+  g.fillStyle = cd.inlay; g.beginPath(); g.arc(0, 0, R * 0.53, 0, TAU); g.fill();
+  g.lineWidth = 6; g.strokeStyle = cd.num; g.beginPath(); g.arc(0, 0, R * 0.47, 0, TAU); g.stroke();
+  g.fillStyle = cd.num; g.textAlign = 'center'; g.textBaseline = 'middle';
+  const fs = cd.val.length > 2 ? 210 : cd.val.length > 1 ? 260 : 300;
+  g.font = `900 ${fs}px "Arial Black", "Helvetica Neue", Arial, sans-serif`;
+  g.fillText(cd.val, 0, 22);
+  spadeAt(g, 0, -R * 0.36, 50); g.fill();
+  g.restore();
+}
+function drawEdge(g, w, h, cd) {
+  g.fillStyle = cd.body; g.fillRect(0, 0, w, h);
+  g.fillStyle = cd.spot;
+  for (let k = 0; k < SPOTS; k++) { const u = spotAngle(k) / TAU, uw = SPOT_W / TAU; g.fillRect((u - uw / 2) * w, 0, uw * w, h); }
+  g.fillStyle = 'rgba(0,0,0,.28)'; g.fillRect(0, 0, w, h * 0.12); g.fillRect(0, h * 0.88, w, h * 0.12);   // rounded-edge shading
+}
+// height map: recessed inlay, raised ring, slightly raised rim, clay grain
+const bump = mk(FS, FS, g => {
+  const R = FS / 2; g.fillStyle = '#808080'; g.fillRect(0, 0, FS, FS);
+  g.translate(R, R);
+  g.fillStyle = '#9a9a9a'; g.beginPath(); g.arc(0, 0, R, 0, TAU); g.arc(0, 0, R * 0.9, 0, TAU, true); g.fill();
+  g.fillStyle = '#5e5e5e'; g.beginPath(); g.arc(0, 0, R * 0.53, 0, TAU); g.fill();
+  g.lineWidth = 14; g.strokeStyle = '#c8c8c8'; g.beginPath(); g.arc(0, 0, R * 0.55, 0, TAU); g.stroke();
+  g.setTransform(1, 0, 0, 1, 0, 0);
+  const id = g.getImageData(0, 0, FS, FS), d = id.data;
+  for (let i = 0; i < d.length; i += 4) { const n = (Math.random() - 0.5) * 10; d[i] += n; d[i + 1] += n; d[i + 2] += n; }
+  g.putImageData(id, 0, 0);
+}, false);
+
+const CR = 1, CTH = 0.2;
+const chipGeo = new THREE.CylinderGeometry(CR, CR, CTH, 96, 1);
+const chipMats = CHIPS.map(cd => {
+  const base = { roughness: 0.55, clearcoat: 0.2, clearcoatRoughness: 0.45, envMapIntensity: 0.35, specularIntensity: 0.5 };
+  const side = new THREE.MeshPhysicalMaterial({ ...base, map: mk(1024, 64, (g, w, h) => drawEdge(g, w, h, cd)) });
+  const top = new THREE.MeshPhysicalMaterial({ ...base, map: mk(FS, FS, g => drawFace(g, cd, false)), bumpMap: bump, bumpScale: 0.35 });
+  const bot = new THREE.MeshPhysicalMaterial({ ...base, map: mk(FS, FS, g => drawFace(g, cd, true)), bumpMap: bump, bumpScale: 0.35 });
+  return [side, top, bot];
+});
+
+/* ---------- hero chips (one per colour) ---------- */
+const heroes = CHIPS.map((cd, i) => {
+  const pivot = new THREE.Group(), holder = new THREE.Group();
+  const chip = new THREE.Mesh(chipGeo, chipMats[i]);
+  holder.rotation.x = Math.PI / 2 - 0.22;   // face toward the camera, leaned back a touch so the rim shows
+  chip.rotation.y = Math.PI / 2;            // turn the printed face upright
+  holder.add(chip); pivot.add(holder); scene.add(pivot);
+  pivot.userData.s = 1;
+  return pivot;
+});
+
+/* ---------- stacks ---------- */
+const stacks = new THREE.Group(); scene.add(stacks); stacks.userData.s = 0; stacks.scale.setScalar(0.001);
+const stackCols = [];
+{
+  let seed = 5; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  [[0, 8], [1, 11], [2, 6], [3, 9]].forEach(([ci, n], si) => {
+    const col = new THREE.Group(); col.position.x = (si - 1.5) * 2.6; stacks.add(col); stackCols.push(col);
+    for (let j = 0; j < n; j++) {
+      const m = new THREE.Mesh(chipGeo, chipMats[rnd() < 0.12 ? (ci + 1 + (rnd() * 3 | 0)) % 4 : ci]);
+      m.position.set((rnd() - 0.5) * 0.07, CTH * (j + 0.5), (rnd() - 0.5) * 0.07); m.rotation.y = rnd() * TAU;
+      col.add(m);
+    }
+  });
+}
+
+/* ---------- lights: white key, warm rim, green felt bounce ---------- */
+const keyL = new THREE.PointLight(0xffffff, 46, 0, 2); keyL.position.set(2.6, 3.2, 6.5); scene.add(keyL);
+const rim = new THREE.PointLight(0xffc68a, 80, 0, 2); rim.position.set(-3.5, 4, -4); scene.add(rim);
+const bounce = new THREE.PointLight(0x2fbf72, 30, 0, 2); bounce.position.set(0, -4.5, 3); scene.add(bounce);
+scene.add(new THREE.AmbientLight(0xffffff, 0.12));
+
+/* ---------- glyph atlas + ASCII pass (same pipeline as the card assets) ---------- */
+const CHARS = ' .:-=+*#%@';
+try { await document.fonts.load('700 30px "JetBrains Mono"'); } catch (e) {}
+const atlas = document.createElement('canvas'), actx = atlas.getContext('2d');
+const glyphTex = new THREE.CanvasTexture(atlas);
+glyphTex.minFilter = THREE.LinearFilter; glyphTex.generateMipmaps = false;
+let cellW = 5, cellH = 8, ascii = null;
+function buildAtlas() {
+  cellH = Math.round((15 - state.detail) * dpr); cellW = Math.max(2, Math.round(cellH * 0.6));
+  const S = 4; atlas.width = cellW * S * CHARS.length; atlas.height = cellH * S;
+  actx.fillStyle = '#000'; actx.fillRect(0, 0, atlas.width, atlas.height);
+  actx.fillStyle = '#fff'; actx.textAlign = 'center'; actx.textBaseline = 'middle';
+  actx.font = `700 ${cellH * S * 0.92}px "JetBrains Mono", monospace`;
+  [...CHARS].forEach((ch, i) => actx.fillText(ch, (i + 0.5) * cellW * S, cellH * S * 0.54));
+  glyphTex.dispose(); glyphTex.needsUpdate = true;
+  if (ascii) ascii.uniforms.cell.value.set(cellW, cellH);
+}
+ascii = new ShaderPass({
+  uniforms: {
+    tDiffuse: { value: null }, tGlyphs: { value: glyphTex }, res: { value: new THREE.Vector2(1, 1) },
+    cell: { value: new THREE.Vector2(5, 8) }, n: { value: CHARS.length }, time: { value: 0 }, pal: { value: 0 }
+  },
+  vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }',
+  fragmentShader: `
+    uniform sampler2D tDiffuse, tGlyphs; uniform vec2 res, cell; uniform float n, time, pal; varying vec2 vUv;
+    float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1,311.7))) * 43758.5453); }
+    void main(){
+      vec2 px = vUv * res;
+      vec2 id = floor(px / cell);
+      vec3 c = texture2D(tDiffuse, (id + 0.5) * cell / res).rgb;
+      float m = max(c.r, max(c.g, c.b));
+      float l = 1.0 - exp(-m * 1.8);
+      float spark = step(0.993, hash(id + floor(time * 8.0))) * smoothstep(0.35, 0.6, l);
+      l = clamp(l + spark * 0.4, 0.0, 1.0);
+      float idx = floor(l * (n - 1.0) + 0.5);
+      vec2 local = fract(px / cell);
+      float g = texture2D(tGlyphs, vec2((idx + local.x) / n, local.y)).r;
+      vec3 hue = c / max(m, 1e-4);
+      if (pal > 0.5 && pal < 1.5) hue = vec3(0.32, 1.0, 0.56);
+      else if (pal > 1.5) hue = vec3(1.0, 0.94, 0.84);
+      vec2 q = vUv * 2.0 - 1.0; float vig = smoothstep(1.75, 0.55, length(q));
+      vec3 col = hue * (0.22 + 1.6 * l) * vig + spark * vec3(1.4, 1.2, 1.0);
+      gl_FragColor = vec4(vec3(0.0032) + g * col, 1.0);
+    }`
+});
+buildAtlas();
+
+const composer = new EffectComposer(renderer);
+composer.addPass(new RenderPass(scene, camera));
+composer.addPass(ascii);
+composer.addPass(new UnrealBloomPass(new THREE.Vector2(1, 1), 0.22, 0.3, 0.65));
+composer.addPass(new OutputPass());
+function resize() {
+  const w = innerWidth, h = innerHeight;
+  renderer.setSize(w, h, false); composer.setSize(w, h);
+  camera.aspect = w / h; camera.updateProjectionMatrix();
+  ascii.uniforms.res.value.set(w * dpr, h * dpr);
+}
+addEventListener('resize', resize); resize();
+
+/* ---------- interaction ---------- */
+let yaw = 0, pitch = 0, vel = 0, drag = null;
+canvas.addEventListener('pointerdown', e => { drag = { x: e.clientX, y: e.clientY }; vel = 0; canvas.setPointerCapture(e.pointerId); canvas.classList.add('drag'); });
+canvas.addEventListener('pointermove', e => {
+  if (!drag) return;
+  const dx = e.clientX - drag.x, dy = e.clientY - drag.y; drag.x = e.clientX; drag.y = e.clientY;
+  yaw += dx * 0.009; vel = dx * 0.009 * 60; pitch = THREE.MathUtils.clamp(pitch + dy * 0.004, -0.6, 0.6);
+});
+const end = () => { drag = null; canvas.classList.remove('drag'); };
+canvas.addEventListener('pointerup', end); canvas.addEventListener('pointercancel', end);
+const press = (sel, attr, val) => document.querySelectorAll(sel).forEach(b => b.setAttribute('aria-pressed', String(b.dataset[attr] === val)));
+document.querySelectorAll('[data-view]').forEach(b => b.addEventListener('click', () => {
+  state.view = b.dataset.view; press('[data-view]', 'view', state.view); yaw = Math.round(yaw / TAU) * TAU;
+}));
+document.querySelectorAll('[data-pal]').forEach(b => b.addEventListener('click', () => {
+  state.pal = +b.dataset.pal; press('[data-pal]', 'pal', b.dataset.pal); ascii.uniforms.pal.value = state.pal;
+}));
+document.getElementById('detail').addEventListener('input', e => { state.detail = +e.target.value; buildAtlas(); });
+const spinBtn = document.getElementById('spin');
+spinBtn.setAttribute('aria-pressed', String(state.spin));
+spinBtn.addEventListener('click', () => { state.spin = !state.spin; spinBtn.setAttribute('aria-pressed', String(state.spin)); });
+
+const toast = document.getElementById('toast'); let toastT;
+function say(msg) { toast.textContent = msg; toast.classList.add('on'); clearTimeout(toastT); toastT = setTimeout(() => toast.classList.remove('on'), 1800); }
+document.getElementById('copy').addEventListener('click', async () => {
+  const cols = Math.floor(innerWidth * dpr / cellW), rows = Math.floor(innerHeight * dpr / cellH);
+  const rt = new THREE.WebGLRenderTarget(cols, rows, { type: THREE.FloatType });
+  renderer.setRenderTarget(rt); renderer.render(scene, camera); renderer.setRenderTarget(null);
+  const buf = new Float32Array(cols * rows * 4);
+  renderer.readRenderTargetPixels(rt, 0, 0, cols, rows, buf); rt.dispose();
+  const lines = [];
+  for (let r = rows - 1; r >= 0; r--) {
+    let s = '';
+    for (let c = 0; c < cols; c++) {
+      const i = (r * cols + c) * 4, m = Math.max(buf[i], buf[i + 1], buf[i + 2]);
+      s += CHARS[Math.round((1 - Math.exp(-m * 1.8)) * (CHARS.length - 1))];
+    }
+    lines.push(s.replace(/\s+$/, ''));
+  }
+  while (lines.length && !lines[0]) lines.shift();
+  while (lines.length && !lines[lines.length - 1]) lines.pop();
+  if (!lines.length) { say('Nothing to copy yet'); return; }
+  const ind = Math.min(...lines.filter(Boolean).map(l => l.match(/^ */)[0].length));
+  const text = lines.map(l => l.slice(ind)).join('\n');
+  try { await navigator.clipboard.writeText(text); say(`Copied ${Math.max(...lines.map(l => l.length - ind))} x ${lines.length} characters`); }
+  catch (e) { say('Your browser blocked the clipboard'); }
+});
+
+/* ---------- layout + animate ---------- */
+function targets() {
+  const wide = camera.aspect > 1.25, v = state.view;
+  if (v === 'all') {
+    const pos = wide ? [[-3.45, 0], [-1.15, 0], [1.15, 0], [3.45, 0]] : [[-1.15, 1.2], [1.15, 1.2], [-1.15, -1.2], [1.15, -1.2]];
+    return { chips: pos.map(([x, y]) => [x, y, 1]), stack: 0, w: wide ? 9.2 : 4.6, h: wide ? 2.4 : 4.8 };
+  }
+  if (v === 'stack') return { chips: CHIPS.map((_, i) => [(i - 1.5) * 4, 0, 0]), stack: 1, w: 10.6, h: 3.4 };
+  const sel = +v;
+  return { chips: CHIPS.map((_, i) => [(i - sel) * 3.2, 0, i === sel ? 1 : 0]), stack: 0, w: 2.6, h: 2.6 };
+}
+const clock = new THREE.Clock();
+const k = (dt, r) => 1 - Math.exp(-dt * r);
+renderer.setAnimationLoop(() => {
+  const dt = Math.min(clock.getDelta(), 0.05), t = clock.elapsedTime, mo = reduce ? 0 : 1;
+  if (!drag) {
+    if (state.spin) yaw += dt * 0.5;
+    yaw += vel * dt; vel *= Math.exp(-dt * 3);
+    pitch += (0 - pitch) * k(dt, 1.5);
+  }
+  const tg = targets(), f = k(dt, 6);
+  heroes.forEach((p, i) => {
+    const [x, y, s] = tg.chips[i];
+    p.position.x += (x - p.position.x) * f; p.position.y += (y + 0.05 * Math.sin(t * 1.2 + i) * mo - p.position.y) * f;
+    p.userData.s += (s - p.userData.s) * f; p.scale.setScalar(Math.max(0.001, p.userData.s)); p.visible = p.userData.s > 0.02;
+    // each chip turns on its own axis, offset like a wave down the row
+    p.rotation.set(pitch, yaw + (state.view === 'all' ? (i - 1.5) * 0.22 : 0), 0.04 * Math.sin(t * 0.8 + i) * mo);
+  });
+  stacks.userData.s += (tg.stack - stacks.userData.s) * f;
+  stacks.scale.setScalar(Math.max(0.001, stacks.userData.s)); stacks.visible = stacks.userData.s > 0.02;
+  stacks.rotation.set(0.42 + pitch, 0.25 * Math.sin(t * 0.3) * mo, 0); stacks.position.y = -0.75;
+  stackCols.forEach((c, i) => c.rotation.y = yaw * 0.6 + i);
+  const halfH = Math.max(tg.h * 0.62, tg.w * 0.6 / camera.aspect);
+  const dist = halfH / Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
+  camera.position.z += (dist - camera.position.z) * k(dt, 4);
+  camera.position.y = 0.1; camera.lookAt(0, 0, 0);
+  ascii.uniforms.time.value = t;
+  composer.render();
+});
+}
+</script>
+</body>
+</html>
